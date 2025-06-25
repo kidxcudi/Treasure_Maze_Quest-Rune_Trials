@@ -1,0 +1,16 @@
+{
+  "name": "Treasure_Maze_Quest-Rune_Trials",
+  "version": "1.0.0",
+  "description": " Escape the Maze… If You Can. Explore a dangerous 3D maze, collect magical runes, avoid traps, and unlock the exit door — but only the smartest explorers will survive. Runes aren’t optional — they are your only way forward. Made using Three.js and Vite.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.161.0"
+  },
+  "devDependencies": {
+    "vite": "^5.2.0"
+  }
+}

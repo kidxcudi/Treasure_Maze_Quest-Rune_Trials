@@ -1,0 +1,18 @@
+body, html {
+  margin: 0; padding: 0; height: 100%; overflow: hidden;
+  font-family: 'Poppins', sans-serif;
+  background-color: #faf9f6; /* Ivory White */
+}
+
+#game-container {
+  width: 100vw; height: 100vh;
+  display: block;
+}
+
+#ui-overlay {
+  position: absolute;
+  top: 10px; left: 10px;
+  color: #3a4f41; /* Deep Olive */
+  pointer-events: none; /* UI is overlay only */
+  z-index: 10;
+}
