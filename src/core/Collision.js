@@ -1,9 +1,17 @@
 import * as THREE from 'three';
 
-export function checkCollision(playerPos, walls, threshold = 1.1) {
+export function checkCollision(playerPosition, walls, buffer = 0.4) {
+  const playerBox = new THREE.Box3().setFromCenterAndSize(
+    playerPosition.clone(),
+    new THREE.Vector3(buffer, buffer, buffer)
+  );
+
   for (const wall of walls) {
-    const dist = wall.position.distanceTo(playerPos);
-    if (dist < threshold) return true;
+    const wallBox = new THREE.Box3().setFromObject(wall);
+    if (wallBox.intersectsBox(playerBox)) {
+      return true;
+    }
   }
+
   return false;
 }

@@ -27,13 +27,5 @@ export function initScene(container) {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Test object
-  const cube = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0x3a4f41 })
-  );
-  cube.position.set(0, 1, -5);
-  scene.add(cube);
-
   return { scene, camera, renderer };
 }

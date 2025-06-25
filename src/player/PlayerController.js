@@ -17,7 +17,7 @@ export class PlayerController {
 
     // Controls
     this.controls = new PointerLockControls(camera, document.body);
-    scene.add(this.controls.getObject());
+    scene.add(this.controls.object);
 
     // Pointer lock click to enable
     document.addEventListener('click', () => {
@@ -53,19 +53,18 @@ export class PlayerController {
     this.velocity.set(0, 0, 0);
     this.direction.set(0, 0, 0);
 
-    if (this.moveForward) this.direction.z -= 1;
-    if (this.moveBackward) this.direction.z += 1;
-    if (this.moveLeft) this.direction.x += 1;
-    if (this.moveRight) this.direction.x -= 1;
+    if (this.moveForward) this.direction.z += 1;
+    if (this.moveBackward) this.direction.z -= 1;
+    if (this.moveLeft) this.direction.x -= 1;
+    if (this.moveRight) this.direction.x += 1;
 
     this.direction.normalize();
-    this.velocity.copy(this.direction).multiplyScalar(this.speed * deltaTime);
 
-    this.controls.moveRight(this.velocity.x);
-    this.controls.moveForward(this.velocity.z);
+    const moveX = this.direction.x * this.speed * deltaTime;
+    const moveZ = this.direction.z * this.speed * deltaTime;
+
+    this.controls.moveRight(moveX);
+    this.controls.moveForward(moveZ);
   }
 
-  getObject() {
-    return this.controls.getObject();
-  }
 }

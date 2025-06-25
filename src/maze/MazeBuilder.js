@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 
-const tileSize = 2;
+const tileSize = 3;
 
 const mazeLayout = [
   '#############',
-  '#S..#.......#',
+  '#...#.......#',
   '#.#.#.#####.#',
-  '#.#.....#...#',
+  '#S#.....#...#',
   '###.###.#.###',
   '#.....#.#...#',
   '#.#####.###.#',
@@ -20,7 +20,7 @@ export function buildMaze(scene) {
   const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1f22 });
   const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xd8cab8 });
 
-  const wallGeometry = new THREE.BoxGeometry(tileSize, tileSize, tileSize);
+  const wallGeometry = new THREE.BoxGeometry(tileSize, tileSize * 2, tileSize);
   const floorGeometry = new THREE.PlaneGeometry(tileSize, tileSize);
 
   const walls = [];
@@ -39,7 +39,7 @@ export function buildMaze(scene) {
 
       if (char === '#') {
         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-        wall.position.set(worldX, tileSize / 2, worldZ);
+        wall.position.set(worldX, tileSize, worldZ);
         wall.castShadow = true;
         wall.receiveShadow = true;
         scene.add(wall);
