@@ -14,7 +14,7 @@ export class ExitTriggerZone {
   update() {
     if (this.activated || !this.exitDoor.isUnlocked()) return;
 
-    const playerPos = this.player.controls.getObject().position.clone();
+    const playerPos = this.player.controls.object.position.clone();
     const doorPos = this.exitDoor.getObject().position.clone();
 
     const distance = playerPos.distanceTo(doorPos);

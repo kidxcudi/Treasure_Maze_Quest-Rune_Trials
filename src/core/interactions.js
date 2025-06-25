@@ -21,7 +21,16 @@ export class InteractionManager {
     this.mouse = new THREE.Vector2(0, 0); // screen center (for FPS)
 
     // Click to interact
-    document.addEventListener('click', () => this.handleClick());
+    document.addEventListener('click', (e) => {
+      if (gameState.gameOver) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      this.handleClick();
+    });
+
   }
 
   tooltip = new Tooltip(); // init once
@@ -40,17 +49,19 @@ export class InteractionManager {
 
     // 🕹️ Exit Mechanism
         // ✅ Exit Mechanism check
+    // 🕹️ Exit Mechanism
     const mech = this.scene.getObjectByName("exit_mechanism");
-    if (mech) {
+    if (mech && !this.gameManager?.isExitActivated?.()) {
       const mechHit = this.raycaster.intersectObject(mech, true);
       if (mechHit.length > 0) {
         console.log("💡 Clicked exit mechanism");
-        this.gameManager?.triggerExitTimer?.();  // <- make sure this is hooked
-        this.scene.remove(mech);
+        this.scene.remove(mech); // ⛔ remove first to prevent multiple clicks
         this.hud?.showMessage("Exit activated! Hurry!");
+        this.gameManager?.triggerExitTimer?.(); // ✅ trigger only once
         return;
       }
     }
+
 
     // 🚪 Door Interactions
     // Doors (no rune required now)

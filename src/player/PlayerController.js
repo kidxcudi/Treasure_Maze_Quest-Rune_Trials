@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
+import { gameState } from '../core/gameState.js'; 
 
 export class PlayerController {
   constructor(camera, scene) {
@@ -48,6 +49,7 @@ export class PlayerController {
   }
 
   update(deltaTime) {
+    if (gameState.movementLocked) return; // block movement if locked
     if (!this.controls.isLocked) return;
 
     this.velocity.set(0, 0, 0);

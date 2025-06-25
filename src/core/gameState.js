@@ -7,6 +7,8 @@ export const gameState = {
   exitDoorOpen: false,
   timerRunning: false,
   timeLeft: 300, // seconds
+  gameOver: false, // ✅ ADD THIS
+  movementLocked: false,
 
   reset() {
     this.equippedRune = null;
@@ -14,5 +16,7 @@ export const gameState = {
     this.exitDoorOpen = false;
     this.timerRunning = false;
     this.timeLeft = 300;
+    this.gameOver = false; // ✅ Reset it
+    this.movementLocked = false; // ✅ Reset movement lock
   }
 };

@@ -71,23 +71,40 @@ export class GameManager {
 
   winGame() {
     if (this.exitTimer) {
-      clearInterval(this.exitTimer);
-      this.exitTimer = null;
+        clearInterval(this.exitTimer);
+        this.exitTimer = null;
     }
     gameState.timerRunning = false;
+    gameState.gameOver = true;
+    gameState.movementLocked = true; 
     this.hud?.updateTimer(0);
-    this.endScreen.showResult("🎉 You Escaped the Maze!");
-  }
 
-  loseGame() {
+    // NEW: stop player movement and show cursor
+    // this.player.controls.unlock();               // Disable PointerLock
+    document.exitPointerLock?.();                // Fallback
+    document.body.style.cursor = 'auto';         // Show cursor
+
+    this.endScreen.showResult("🎉 You Escaped the Maze!");
+    }
+
+    loseGame() {
     if (this.exitTimer) {
-      clearInterval(this.exitTimer);
-      this.exitTimer = null;
+        clearInterval(this.exitTimer);
+        this.exitTimer = null;
     }
     gameState.timerRunning = false;
+    gameState.gameOver = true;
+    gameState.movementLocked = true; 
     this.hud?.updateTimer(0);
+
+    // NEW: stop player movement and show cursor
+    // this.player.controls.unlock();               // Disable PointerLock
+    document.exitPointerLock?.();
+    document.body.style.cursor = 'auto';
+
     this.endScreen.showResult("💀 Time's up! You are trapped forever.");
-  }
+    }
+
 
   resetGame() {
     this.startGame();
