@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import { gameState } from './gameState.js';
+import { RuneEffects } from '../runes/RuneEffects.js';
+import { RuneTypes } from '../runes/RuneTypes.js';
+import { Tooltip } from '../ui/Tooltip.js';
+
 
 export class InteractionManager {
-  constructor(camera, scene, runeManager, doorManager, trapManager, interactables = [], hud = null) {
+  constructor(camera, scene, runeManager, doorManager, trapManager, interactables = [], hud = null, player = null) {
     this.camera = camera;
     this.scene = scene;
     this.runeManager = runeManager;
@@ -10,6 +14,7 @@ export class InteractionManager {
     this.trapManager = trapManager;
     this.interactables = interactables; // e.g. breakable walls, easter eggs
     this.hud = hud;
+    this.player = player;
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2(0, 0); // screen center (for FPS)
@@ -17,6 +22,8 @@ export class InteractionManager {
     // Click to interact
     document.addEventListener('click', () => this.handleClick());
   }
+
+  tooltip = new Tooltip(); // init once
 
   handleClick() {
     if (!this.camera || !this.scene) return;
@@ -64,19 +71,36 @@ export class InteractionManager {
       }
     }
   }
-  
-  pickupRune(rune) {
+
+  pickupRune(hitObject) {
     if (gameState.equippedRune) {
       this.hud?.showMessage("You already have a rune equipped!");
       return;
     }
 
+    // 🔍 Find the actual top-level rune object
+    const rune = this.runeManager.getRunes().find(r =>
+      r === hitObject || r.children.includes(hitObject)
+    );
+
+    if (!rune) {
+      console.warn("No valid rune found for pickup");
+      return;
+    }
+
+    const runeData = RuneTypes[rune.name];
+    if (runeData) {
+      this.hud?.updateRuneDisplay(rune.name);
+      this.hud?.showMessage(`Picked up ${runeData.label}`);
+      this.tooltip.show(runeData.description);
+    } else {
+      this.hud?.updateRuneDisplay(rune.name);
+    }
+
     gameState.equippedRune = rune.name;
-    this.runeManager.removeRune(rune);
-    this.hud?.updateRuneDisplay(rune.name);
-    this.hud?.showMessage(`Picked up ${rune.name.replace('rune_', '')} rune.`);
-    // TODO: Trigger rune UI update or effect (like icon flash)
+    this.runeManager.removeRune(rune); // ✅ Remove from scene and list
   }
+
 
   useRune() {
     if (!gameState.equippedRune) {
@@ -84,12 +108,18 @@ export class InteractionManager {
       return false;
     }
 
-    const used = gameState.equippedRune;
-    this.hud?.showMessage(`${used.replace('rune_', '')} rune used`);
+    const runeName = gameState.equippedRune;
+
+    // Try to trigger a rune effect
+    RuneEffects[runeName]?.activate?.(this.player, this.scene, this.hud);
+
     gameState.equippedRune = null;
     this.hud?.updateRuneDisplay(null);
+    this.hud?.showMessage(`${runeName.replace("rune_", "")} rune used`);
+
     return true;
   }
+
 
   getEquippedRune() {
     return gameState.equippedRune;

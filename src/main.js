@@ -7,6 +7,7 @@ import { RuneManager } from './runes/RuneManager.js';
 import { InteractionManager } from './core/interactions.js';
 import { gameState } from './core/gameState.js';
 import { HUD } from './ui/HUD.js';
+import { InputHandler } from './core/InputHandler.js';
 
 let scene, camera, renderer, clock;
 let player;
@@ -45,8 +46,11 @@ function init() {
     null,    // doorManager (placeholder for now)
     null,    // trapManager (placeholder for now)
     [],
-    hud       // interactables (e.g., breakable walls)
+    hud,
+    player      // interactables (e.g., breakable walls)
   );
+
+  const inputHandler = new InputHandler(interactionManager, player);
 
   // Handle window resizing
   window.addEventListener('resize', () => {

@@ -1,6 +1,7 @@
 // src/ui/HUD.js
 
 import { gameState } from '../core/gameState.js';
+import { RuneTypes } from '../runes/RuneTypes.js';
 
 export class HUD {
   constructor() {
@@ -22,10 +23,18 @@ export class HUD {
   }
 
   updateRuneDisplay(runeName) {
-    this.runeDisplay.textContent = runeName
-      ? `Rune: ${runeName.replace('rune_', '')}`
-      : 'No Rune';
-  }
+    if (!runeName) {
+        this.runeDisplay.textContent = 'No Rune';
+        return;
+    }
+
+    const runeData = RuneTypes[runeName];
+    if (runeData) {
+        this.runeDisplay.textContent = `${runeData.icon} ${runeData.label}`;
+    } else {
+        this.runeDisplay.textContent = runeName; // fallback
+    }
+    }
 
   updateTimer(secondsLeft) {
     const mins = Math.floor(secondsLeft / 60);
