@@ -6,7 +6,7 @@ import { Tooltip } from '../ui/Tooltip.js';
 
 
 export class InteractionManager {
-  constructor(camera, scene, runeManager, doorManager, trapManager, interactables = [], hud = null, player = null) {
+  constructor(camera, scene, runeManager, doorManager, trapManager, interactables = [], hud = null, player = null, gameManager = null) {
     this.camera = camera;
     this.scene = scene;
     this.runeManager = runeManager;
@@ -15,6 +15,7 @@ export class InteractionManager {
     this.interactables = interactables; // e.g. breakable walls, easter eggs
     this.hud = hud;
     this.player = player;
+    this.gameManager = gameManager; // ✅ NEW
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2(0, 0); // screen center (for FPS)
@@ -37,16 +38,32 @@ export class InteractionManager {
       return;
     }
 
-    // 🚪 Door Interactions
-    if (this.doorManager) {
-      const doorHits = this.raycaster.intersectObjects(this.doorManager.getDoors(), true);
-      if (doorHits.length > 0) {
-        this.doorManager.tryOpenDoor(doorHits[0].object, gameState.equippedRune);
+    // 🕹️ Exit Mechanism
+        // ✅ Exit Mechanism check
+    const mech = this.scene.getObjectByName("exit_mechanism");
+    if (mech) {
+      const mechHit = this.raycaster.intersectObject(mech, true);
+      if (mechHit.length > 0) {
+        console.log("💡 Clicked exit mechanism");
+        this.gameManager?.triggerExitTimer?.();  // <- make sure this is hooked
+        this.scene.remove(mech);
+        this.hud?.showMessage("Exit activated! Hurry!");
         return;
       }
     }
 
-    // 💀 Traps or Fakes
+    // 🚪 Door Interactions
+    // Doors (no rune required now)
+    if (this.doorManager) {
+      const doorHits = this.raycaster.intersectObjects(this.doorManager.getDoors(), true);
+      if (doorHits.length > 0) {
+        this.doorManager.tryOpenDoor(doorHits[0].object);
+        return;
+      }
+    }
+
+
+    // 💀 Trap Interactions
     if (this.trapManager) {
       const trapHits = this.raycaster.intersectObjects(this.trapManager.getTraps(), true);
       if (trapHits.length > 0) {
@@ -55,15 +72,13 @@ export class InteractionManager {
       }
     }
 
-    // 🧱 Secret Interactables (like breakable walls)
+    // 🧱 Secret Interactables
     for (let obj of this.interactables) {
       const hits = this.raycaster.intersectObject(obj, true);
       if (hits.length > 0 && gameState.equippedRune) {
-        // Example: break wall with correct rune
         if (obj.userData.requiredRune === gameState.equippedRune) {
-          console.log(`Used ${gameState.equippedRune} on ${obj.name}`);
           this.useRune();
-          this.scene.remove(obj); // Remove wall
+          this.scene.remove(obj);
         } else {
           console.log("Wrong rune!");
         }
@@ -71,6 +86,7 @@ export class InteractionManager {
       }
     }
   }
+
 
   pickupRune(hitObject) {
     if (gameState.equippedRune) {

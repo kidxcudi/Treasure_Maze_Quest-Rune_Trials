@@ -1,44 +1,95 @@
 // src/core/GameManager.js
 import { gameState } from './gameState.js';
-import { Timer } from './Timer.js';
+import { EndScreen } from '../ui/EndScreen.js';
 
 export class GameManager {
-  constructor(hud, scene, player, exitDoor) {
+  constructor(hud, scene, player, exitDoor, doorManager) {
     this.hud = hud;
     this.scene = scene;
     this.player = player;
     this.exitDoor = exitDoor;
-    this.timer = new Timer(this.onTimerEnd.bind(this), this.hud);
+    this.doorManager = doorManager; // ✅ new
+
+    this.exitCountdown = 60;
+    this.exitTimer = null;
+    this.timerActive = false;
+    this.exitActivated = false;
+
+    this.endScreen = new EndScreen();
   }
 
   startGame() {
     gameState.reset();
-    this.hud.showMessage("Find the exit and use your rune wisely...");
-    this.hud.updateRuneDisplay(null);
-    this.timer.stop();
-    this.hud.updateTimer(gameState.timeLeft);
+    this.hud?.showMessage("Find the treasures and reach the exit...");
+    this.hud?.updateRuneDisplay(null);
+    this.hud?.updateTimer(0);
+    this.timerActive = false;
+    this.exitActivated = false;
+
+    if (this.exitTimer) {
+      clearInterval(this.exitTimer);
+      this.exitTimer = null;
+    }
+
+    gameState.timerRunning = false;
+    this.exitDoor.locked = true;
+    this.exitDoor.doorMesh.material.color.set(0x4444ff);
   }
 
   triggerExitTimer() {
-    if (!gameState.timerRunning) {
-      this.hud.showMessage("The exit is open! Hurry!");
-      this.timer.start(gameState.timeLeft);
-      gameState.timerRunning = true;
-      this.exitDoor.unlock();
-    }
+    if (this.timerActive || this.exitActivated) return;
+
+    console.log("✅ Exit timer triggered");
+
+    this.exitActivated = true;
+    this.timerActive = true;
+
+    this.doorManager.unlock(); // ✅ unlock through manager
+    this.exitDoor.locked = false; // also update exitDoor itself
+
+    gameState.timerRunning = true;
+    this.hud?.startTimer?.(this.exitCountdown);
+
+    let timeLeft = this.exitCountdown;
+
+    this.exitTimer = setInterval(() => {
+      console.log("⏱ Timer tick:", timeLeft);
+      timeLeft--;
+      this.hud?.updateTimer(timeLeft);
+
+      if (timeLeft <= 0) {
+        clearInterval(this.exitTimer);
+        this.exitTimer = null;
+        this.loseGame();
+      }
+    }, 1000);
   }
 
-  onTimerEnd() {
-    gameState.timerRunning = false;
-    this.hud.showEndScreen(false); // show lose
+  isExitActivated() {
+    return this.exitActivated;
   }
 
   winGame() {
-    this.timer.stop();
-    this.hud.showEndScreen(true); // show win
+    if (this.exitTimer) {
+      clearInterval(this.exitTimer);
+      this.exitTimer = null;
+    }
+    gameState.timerRunning = false;
+    this.hud?.updateTimer(0);
+    this.endScreen.showResult("🎉 You Escaped the Maze!");
+  }
+
+  loseGame() {
+    if (this.exitTimer) {
+      clearInterval(this.exitTimer);
+      this.exitTimer = null;
+    }
+    gameState.timerRunning = false;
+    this.hud?.updateTimer(0);
+    this.endScreen.showResult("💀 Time's up! You are trapped forever.");
   }
 
   resetGame() {
-    this.startGame(); // you can expand this later
+    this.startGame();
   }
 }

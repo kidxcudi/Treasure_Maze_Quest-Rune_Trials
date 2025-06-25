@@ -3,7 +3,7 @@
 export const RuneEffects = {
   rune_flight: {
     activate(player, scene, hud) {
-      const obj = player.controls.getObject();
+      const obj = player.controls.object;
       obj.position.y += 15;
 
       hud?.showMessage("You float above the ground...");

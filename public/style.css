@@ -44,3 +44,10 @@ body, html {
   transition: opacity 0.3s ease;
 }
 
+#timer-display {
+  font-weight: bold;
+  font-size: 20px;
+  color: #ff3333;
+}
+
+
