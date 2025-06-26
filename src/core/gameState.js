@@ -3,7 +3,7 @@
 export const gameState = {
   equippedRune: null,
   treasuresCollected: 0,
-  totalTreasures: 4,
+  totalTreasures: 3,
   exitDoorOpen: false,
   timerRunning: false,
   timeLeft: 300, // seconds

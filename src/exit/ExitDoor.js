@@ -20,6 +20,7 @@ export class ExitDoor {
     const material = new THREE.MeshStandardMaterial({ color: 0x4444ff });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = "exit_door";
+    mesh.userData.isTreasure = true;
     return mesh;
   }
 

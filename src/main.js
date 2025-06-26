@@ -13,6 +13,7 @@ import { ExitDoor } from './exit/ExitDoor.js';
 import { ExitTriggerZone } from './exit/ExitTriggerZone.js';
 import { DoorManager } from './exit/DoorManager.js';
 import { InputHandler } from './core/InputHandler.js';
+import { TreasureManager } from './maze/TreasureManager.js'; // ✅ NEW
 
 let scene, camera, renderer, clock;
 let player;
@@ -28,63 +29,68 @@ function init() {
   renderer = setup.renderer;
   clock = new THREE.Clock();
 
-  // Build maze
+  // Maze & walls
   const maze = buildMaze(scene);
   walls = maze.walls;
 
-  // Player setup
+  // Optional: replace with your actual UI manager if used
+  const uiManager = null;
+
+  // Player
   player = new PlayerController(camera, scene);
-  player.controls.object.position.set(2, 1, 6); // Start position 
+  player.controls.object.position.set(2, 1, 6);
+
+  // HUD
+  const hud = new HUD();
+  hud.updateRuneDisplay(null);
 
   // Runes
   runeManager = new RuneManager(scene);
 
-  const hud = new HUD();
-  hud.updateRuneDisplay(null);
+  // Treasures
+  const treasureManager = new TreasureManager(scene, hud);
+  gameState.totalTreasures = treasureManager.getTreasures().length; // ✅ Track total
 
-  // Create exit door
+  // Exit Door
   const exitDoor = new ExitDoor(scene, new THREE.Vector3(28, 2, 28));
 
-  // First: temporarily define doorManager as null
+  // Game Manager
   let doorManager;
-
-  // Now create gameManager and pass in doorManager (can be updated later)
   const gameManager = new GameManager(hud, scene, player, exitDoor, null);
-
-  // Now instantiate doorManager (now that gameManager exists)
   doorManager = new DoorManager(exitDoor, gameManager);
-
-  // Finally, set doorManager reference inside gameManager
   gameManager.doorManager = doorManager;
 
-
-  // Game manager and exit system
   const exitMechanism = new ExitMechanism(scene, new THREE.Vector3(20, 0.2, 20), gameManager);
   const exitTrigger = new ExitTriggerZone(player, exitDoor, gameManager);
 
-  // Interaction manager with real doorManager
+  // TrapManager placeholder (null unless added later)
+  const trapManager = null;
+
+  // Interactions
   interactionManager = new InteractionManager(
     camera,
     scene,
     runeManager,
     doorManager,
-    null,         // trapManager (if any)
-    [],
+    trapManager,
+    [],            // interactables
     hud,
     player,
-    gameManager
+    gameManager,
+    maze,
+    uiManager,
+    treasureManager // ✅ passed in
   );
 
   const inputHandler = new InputHandler(interactionManager, player);
 
-  // Window resize
+  // Resize
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // Save exit trigger for update in animation loop
   window.exitTrigger = exitTrigger;
 
   animate();
