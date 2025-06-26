@@ -67,4 +67,14 @@ export class HUD {
       this.messageDisplay.style.opacity = 0;
     }, duration);
   }
+
+  hide() {
+    document.getElementById('ui-overlay').style.display = 'none';
+    document.getElementById('crosshair').style.display = 'none';
+  }
+  show() {
+    document.getElementById('ui-overlay').style.display = 'block';
+    document.getElementById('crosshair').style.display = 'block';
+  }
+
 }
