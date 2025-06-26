@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
-import { gameState } from '../core/gameState.js'; 
+import { gameState } from '../core/gameState.js';
+import { maze1 } from '../maze/mazeLayout.js'; // <-- Adjust path if needed
+
+const tileSize = maze1.tileSize;
 
 export class PlayerController {
   constructor(camera, scene) {
     this.camera = camera;
     this.scene = scene;
 
-    // Movement state
     this.moveForward = false;
     this.moveBackward = false;
     this.moveLeft = false;
@@ -15,20 +17,15 @@ export class PlayerController {
     this.velocity = new THREE.Vector3();
     this.direction = new THREE.Vector3();
     this.speed = 5;
-    this.controlsInverted = false;  // initialize here
+    this.controlsInverted = false;
 
-    // Controls
     this.controls = new PointerLockControls(camera, document.body);
     scene.add(this.controls.object);
 
-    // Pointer lock click to enable
     document.addEventListener('click', () => {
-      if (!gameState.gameOver) {
-        this.controls.lock();
-      }
+      if (!gameState.gameOver) this.controls.lock();
     });
 
-    // Movement keys
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('keyup', (e) => this.onKeyUp(e));
   }
@@ -52,14 +49,12 @@ export class PlayerController {
   }
 
   update(deltaTime) {
-    if (gameState.movementLocked) return;
-    if (!this.controls.isLocked) return;
+    if (gameState.movementLocked || !this.controls.isLocked) return;
 
     this.velocity.set(0, 0, 0);
     this.direction.set(0, 0, 0);
 
     const forward = this.controlsInverted ? -1 : 1;
-
     if (this.moveForward) this.direction.z += 1 * forward;
     if (this.moveBackward) this.direction.z -= 1 * forward;
     if (this.moveLeft) this.direction.x -= 1 * forward;
@@ -110,7 +105,6 @@ export class PlayerController {
     window.addEventListener('keydown', stepHandler);
   }
 
-  // New method for effect durations
   applyEffectDuration(effectName, steps, onExpire) {
     let stepCount = 0;
 

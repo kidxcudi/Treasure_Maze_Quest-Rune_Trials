@@ -1,5 +1,8 @@
 // src/exit/ExitDoor.js
 import * as THREE from 'three';
+import { maze1 } from '../maze/mazeLayout.js'; // <-- Adjust path if needed
+
+const tileSize = maze1.tileSize;
 
 export class ExitDoor {
   constructor(scene, position) {
@@ -9,7 +12,7 @@ export class ExitDoor {
     this.doorMesh = this.createDoorMesh();
     this.doorMesh.position.copy(position);
 
-    // No rune required for unlocking currently
+    // You could later use this if certain runes are required
     this.doorMesh.userData.requiredRune = null;
 
     this.scene.add(this.doorMesh);
@@ -36,4 +39,17 @@ export class ExitDoor {
   isUnlocked() {
     return !this.locked;
   }
+}
+
+// ✅ Helper function to spawn the door from maze1
+export function spawnExitDoor(scene) {
+  const { x, z } = maze1.objects.exit;
+  const worldX = x * tileSize + tileSize / -2;
+  const worldZ = z * tileSize + tileSize / -2;
+  const position = new THREE.Vector3(
+    worldX,
+    1,
+    worldZ
+  );
+  return new ExitDoor(scene, position);
 }

@@ -17,7 +17,7 @@ export class InteractionManager {
     gameManager = null,
     maze = null,
     uiManager = null,
-    treasureManager = null // ✅ New
+    treasureManager = null
   ) {
     this.camera = camera;
     this.scene = scene;
@@ -30,11 +30,20 @@ export class InteractionManager {
     this.gameManager = gameManager;
     this.maze = maze;
     this.uiManager = uiManager;
-    this.treasureManager = treasureManager; // ✅ Store
+    this.treasureManager = treasureManager;
+    this.interactionRange = 5; // Units
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2(0, 0);
+    this.tooltip = new Tooltip();
 
+    // Track mouse position
+    document.addEventListener('mousemove', (event) => {
+      this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    });
+
+    // Handle clicks
     document.addEventListener('click', (e) => {
       if (gameState.gameOver) {
         e.preventDefault();
@@ -45,75 +54,76 @@ export class InteractionManager {
     });
   }
 
-  tooltip = new Tooltip();
-
   handleClick() {
     if (!this.camera || !this.scene) return;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
 
-    // 🎯 Rune pickup
-    const runeHits = this.raycaster.intersectObjects(this.runeManager.getRunes(), true);
-    if (runeHits.length > 0) {
-      this.pickupRune(runeHits[0].object).catch(console.error);
+    const allTargets = [
+      ...this.runeManager.getRunes(),
+      ...(this.doorManager?.getDoors?.() || []),
+      ...(this.trapManager?.getTraps?.() || []),
+      ...(this.treasureManager?.getTreasures?.() || []),
+      ...(this.interactables || []),
+    ];
+
+    const mech = this.scene.getObjectByName("exit_mechanism");
+    if (mech) allTargets.push(mech);
+
+    const hits = this.raycaster.intersectObjects(allTargets, true);
+    if (hits.length === 0) return;
+
+    const nearestHit = hits[0].object;
+    if (!this.isWithinRange(nearestHit)) {
+      this.hud?.showMessage("Too far to interact.");
+      return;
+    }
+
+    // 🎯 Rune
+    if (this.runeManager.getRunes().includes(nearestHit)) {
+      this.pickupRune(nearestHit).catch(console.error);
       return;
     }
 
     // 🎯 Exit mechanism
-    const mech = this.scene.getObjectByName("exit_mechanism");
-    if (mech && !this.gameManager?.isExitActivated?.()) {
-      const mechHit = this.raycaster.intersectObject(mech, true);
-      if (mechHit.length > 0) {
-        if (gameState.treasuresCollected >= gameState.totalTreasures) {
-          console.log("✅ All treasures collected. Exit activated.");
-          this.scene.remove(mech);
-          this.hud?.showMessage("Exit activated! Hurry!");
-          this.gameManager?.triggerExitTimer?.();
-        } else {
-          const missing = gameState.totalTreasures - gameState.treasuresCollected;
-          this.hud?.showMessage(`You still need ${missing} treasure${missing > 1 ? 's' : ''}...`);
-        }
-        return;
+    if (mech && nearestHit === mech && !this.gameManager?.isExitActivated?.()) {
+      if (gameState.treasuresCollected >= gameState.totalTreasures) {
+        this.scene.remove(mech);
+        this.hud?.showMessage("Exit activated! Hurry!");
+        this.gameManager?.triggerExitTimer?.();
+      } else {
+        const missing = gameState.totalTreasures - gameState.treasuresCollected;
+        this.hud?.showMessage(`You still need ${missing} treasure${missing > 1 ? 's' : ''}...`);
       }
+      return;
     }
 
-
-    // 🎯 Exit door
-    if (this.doorManager) {
-      const doorHits = this.raycaster.intersectObjects(this.doorManager.getDoors(), true);
-      if (doorHits.length > 0) {
-        this.doorManager.tryOpenDoor(doorHits[0].object);
-        return;
-      }
+    // 🎯 Door
+    if (this.doorManager && this.doorManager.getDoors().includes(nearestHit)) {
+      this.doorManager.tryOpenDoor(nearestHit);
+      return;
     }
 
-    // 🎯 Trap trigger
-    if (this.trapManager) {
-      const trapHits = this.raycaster.intersectObjects(this.trapManager.getTraps(), true);
-      if (trapHits.length > 0) {
-        this.trapManager.triggerTrap(trapHits[0].object);
-        return;
-      }
+    // 🎯 Trap
+    if (this.trapManager && this.trapManager.getTraps().includes(nearestHit)) {
+      this.trapManager.triggerTrap(nearestHit);
+      return;
     }
 
-    // 🎯 Treasure pickup
-    if (this.treasureManager) {
-      const treasureHits = this.raycaster.intersectObjects(this.treasureManager.getTreasures(), true);
-      if (treasureHits.length > 0) {
-        this.treasureManager.collect(treasureHits[0].object);
-        return;
-      }
+    // 🎯 Treasure
+    if (this.treasureManager && this.treasureManager.getTreasures().includes(nearestHit)) {
+      this.treasureManager.collect(nearestHit);
+      return;
     }
 
-    // 🎯 Interactable rune-use targets
+    // 🎯 Interactable targets
     for (let obj of this.interactables) {
-      const hits = this.raycaster.intersectObject(obj, true);
-      if (hits.length > 0 && gameState.equippedRune) {
+      if (nearestHit === obj && gameState.equippedRune) {
         if (obj.userData.requiredRune === gameState.equippedRune) {
           this.useRune();
           this.scene.remove(obj);
         } else {
-          console.log("Wrong rune!");
+          this.hud?.showMessage("Wrong rune!");
         }
         return;
       }
@@ -202,5 +212,19 @@ export class InteractionManager {
       default:
         return this.scene;
     }
+  }
+
+  isWithinRange(object) {
+    if (!this.player?.controls?.object || !object?.position) return false;
+
+    const playerPos = this.player.controls.object.position;
+
+    // Walk up the parent chain to find a positioned mesh
+    let target = object;
+    while (target && !target.position && target.parent) {
+      target = target.parent;
+    }
+
+    return target?.position && playerPos.distanceTo(target.position) <= this.interactionRange;
   }
 }

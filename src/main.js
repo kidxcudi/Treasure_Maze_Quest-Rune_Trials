@@ -8,12 +8,13 @@ import { InteractionManager } from './core/interactions.js';
 import { gameState } from './core/gameState.js';
 import { HUD } from './ui/HUD.js';
 import { GameManager } from './core/GameManager.js';
-import { ExitMechanism } from './exit/ExitMechanism.js';
-import { ExitDoor } from './exit/ExitDoor.js';
+import { spawnExitMechanism } from './exit/ExitMechanism.js';
+import { spawnExitDoor } from './exit/ExitDoor.js';
 import { ExitTriggerZone } from './exit/ExitTriggerZone.js';
 import { DoorManager } from './exit/DoorManager.js';
 import { InputHandler } from './core/InputHandler.js';
-import { TreasureManager } from './maze/TreasureManager.js'; // ✅ NEW
+import { TreasureManager } from './maze/TreasureManager.js';
+import { maze1 } from './maze/mazeLayout.js'; // For tileSize and maze data
 
 let scene, camera, renderer, clock;
 let player;
@@ -36,9 +37,14 @@ function init() {
   // Optional: replace with your actual UI manager if used
   const uiManager = null;
 
-  // Player
+  // Player - positioned at maze start
   player = new PlayerController(camera, scene);
-  player.controls.object.position.set(2, 1, 6);
+  const start = maze1.objects.playerStart;
+  player.controls.object.position.set(
+    start.x * maze1.tileSize,
+    1,
+    start.z * maze1.tileSize
+  );
 
   // HUD
   const hud = new HUD();
@@ -46,21 +52,25 @@ function init() {
 
   // Runes
   runeManager = new RuneManager(scene);
+  runeManager.spawnFromMap(maze1);
 
   // Treasures
   const treasureManager = new TreasureManager(scene, hud);
-  gameState.totalTreasures = treasureManager.getTreasures().length; // ✅ Track total
+  treasureManager.spawnFromMap(maze1);
+  gameState.totalTreasures = treasureManager.getTreasures().length;
 
-  // Exit Door
-  const exitDoor = new ExitDoor(scene, new THREE.Vector3(28, 2, 28));
+  // Exit Door - spawn using helper (returns ExitDoor instance)
+  const exitDoor = spawnExitDoor(scene);
 
   // Game Manager
-  let doorManager;
   const gameManager = new GameManager(hud, scene, player, exitDoor, null);
-  doorManager = new DoorManager(exitDoor, gameManager);
+  const doorManager = new DoorManager(exitDoor, gameManager);
   gameManager.doorManager = doorManager;
 
-  const exitMechanism = new ExitMechanism(scene, new THREE.Vector3(20, 0.2, 20), gameManager);
+  // Exit Mechanism - use helper to spawn correctly
+  const exitMechanism = spawnExitMechanism(scene, gameManager);
+
+  // Exit Trigger Zone
   const exitTrigger = new ExitTriggerZone(player, exitDoor, gameManager);
 
   // TrapManager placeholder (null unless added later)
@@ -79,12 +89,13 @@ function init() {
     gameManager,
     maze,
     uiManager,
-    treasureManager // ✅ passed in
+    treasureManager
   );
 
+  // Input Handler
   const inputHandler = new InputHandler(interactionManager, player);
 
-  // Resize
+  // Resize handling
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();

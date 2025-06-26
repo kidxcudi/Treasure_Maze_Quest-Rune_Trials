@@ -1,97 +1,66 @@
 import * as THREE from 'three';
+import { maze1 } from './mazeLayout.js';
 
-const tileSize = 3;
-
-const mazeLayout = [
-  '#############',
-  '#...#.......#',
-  '#.#.#.#####.#',
-  '#S#.....#...#',
-  '###.###.#.###',
-  '#.....#.#...#',
-  '#.#####.###.#',
-  '#.....#.....#',
-  '#.###.#####.#',
-  '#...#.....E.#',
-  '#############',
-];
+export const tileSize = maze1.tileSize;
+const wallHeight = tileSize * 2;
 
 export function buildMaze(scene) {
   const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1f22 });
   const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xd8cab8 });
 
-  const wallGeometry = new THREE.BoxGeometry(tileSize, tileSize * 2, tileSize);
   const floorGeometry = new THREE.PlaneGeometry(tileSize, tileSize);
+  const wallGeometry = new THREE.BoxGeometry(tileSize, wallHeight, tileSize);
 
   const walls = [];
-  const openTiles = []; // ⬅️ For storing walkable positions
+  const openTiles = [];
 
-  for (let z = 0; z < mazeLayout.length; z++) {
-    for (let x = 0; x < mazeLayout[z].length; x++) {
-      const char = mazeLayout[z][x];
+  const rows = maze1.layout.length;
+  const cols = maze1.layout[0].length;
+
+  for (let z = 0; z < rows; z++) {
+    for (let x = 0; x < cols; x++) {
+      const char = maze1.layout[z][x];
       const worldX = x * tileSize;
       const worldZ = z * tileSize;
 
-      // Floor tile
+      // Floor
       const floor = new THREE.Mesh(floorGeometry, floorMaterial);
       floor.rotation.x = -Math.PI / 2;
       floor.position.set(worldX, 0, worldZ);
+      floor.receiveShadow = true;
       scene.add(floor);
 
       if (char === '#') {
+        // Wall
         const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-        wall.position.set(worldX, tileSize, worldZ);
+        wall.position.set(worldX, wallHeight / 2, worldZ);
         wall.castShadow = true;
         wall.receiveShadow = true;
         wall.userData.isObstacle = true;
         scene.add(wall);
         walls.push(wall);
       } else {
-        // Save open tile location
-        const fakeWall = new THREE.Mesh(wallGeometry, wallMaterial);
-        fakeWall.position.set(worldX, tileSize, worldZ);
-        fakeWall.visible = false; // initially invisible
+        // Fake invisible blocker (for temporary path blocking)
+        const fakeWall = new THREE.Mesh(
+          new THREE.BoxGeometry(tileSize, wallHeight, tileSize),
+          wallMaterial
+        );
+        fakeWall.position.set(worldX, wallHeight / 2, worldZ);
+        fakeWall.visible = false;
         scene.add(fakeWall);
-
-        openTiles.push({
-          x: worldX,
-          z: worldZ,
-          mesh: fakeWall,
-        });
+        openTiles.push({ x: worldX, z: worldZ, mesh: fakeWall });
       }
     }
-  }
-
-  function getNearestOpenTile(playerPos) {
-    let closest = null;
-    let minDist = Infinity;
-
-    for (const tile of openTiles) {
-      const dx = tile.x - playerPos.x;
-      const dz = tile.z - playerPos.z;
-      const dist = dx * dx + dz * dz;
-
-      if (dist < minDist) {
-        minDist = dist;
-        closest = tile;
-      }
-    }
-
-    return closest;
   }
 
   function blockAllPaths(steps = 10) {
-    openTiles.forEach(tile => {
-      tile.mesh.visible = true; // Show fake wall
-    });
+    openTiles.forEach(tile => tile.mesh.visible = true);
 
     let counter = 0;
     const stepHandler = () => {
       counter++;
       if (counter >= steps) {
-        openTiles.forEach(tile => {
-          tile.mesh.visible = false; // Restore walkable state
-        });
+        openTiles.forEach(tile => tile.mesh.visible = false);
         window.removeEventListener('keydown', stepHandler);
       }
     };
@@ -101,8 +70,10 @@ export function buildMaze(scene) {
 
   return {
     walls,
-    tileSize,
-    mazeLayout,
+    openTiles,
     blockAllPaths,
+    tileSize,
+    layout: maze1.layout,
+    objects: maze1.objects,
   };
 }

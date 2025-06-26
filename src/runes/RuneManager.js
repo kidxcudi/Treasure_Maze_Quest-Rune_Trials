@@ -1,15 +1,14 @@
-// src/runes/RuneManager.js
-
 import * as THREE from 'three';
 import { RuneTypes } from './RuneTypes.js';
+import { maze1 } from '../maze/mazeLayout.js'; // <-- Adjust path if needed
+
+const tileSize = maze1.tileSize;
 
 export class RuneManager {
   constructor(scene) {
     this.scene = scene;
     this.runes = [];
-    this.fakeChance = Math.random() * (0.35 - 0.25) + 0.25;  
-
-    this.initRunes();
+    this.fakeChance = Math.random() * (0.35 - 0.25) + 0.25;
   }
 
   createRune(baseName, position) {
@@ -19,13 +18,12 @@ export class RuneManager {
     let assignedName = baseName;
     let isTrap = false;
 
-    // Decide if this should secretly be a fake rune
+    // Randomly convert to fake rune
     if (baseData.fakeVariant && Math.random() < this.fakeChance) {
       assignedName = baseData.fakeVariant;
       isTrap = true;
     }
 
-    // Always use visual from the real rune (baseData)
     const material = new THREE.MeshStandardMaterial({
       color: baseData.color,
       emissive: baseData.color,
@@ -33,15 +31,15 @@ export class RuneManager {
     });
 
     const rune = new THREE.Mesh(
-      new THREE.SphereGeometry(0.4, 32, 32),
+      new THREE.SphereGeometry(0.2, 32, 32),
       material
     );
 
-    rune.name = assignedName; // internally store actual behavior
+    rune.name = assignedName;
     rune.userData = {
       label: baseData.label,
       isTrap,
-      displayName: baseName
+      displayName: baseName,
     };
 
     rune.position.copy(position);
@@ -49,13 +47,14 @@ export class RuneManager {
     this.runes.push(rune);
   }
 
-
-  initRunes() {
-    this.createRune('rune_flight', new THREE.Vector3(8, 1, 8));
-    this.createRune('rune_strength', new THREE.Vector3(12, 1, 10));
-    this.createRune('rune_speed', new THREE.Vector3(11, 1, 10));
-    this.createRune('rune_vision', new THREE.Vector3(4, 1, 4));
-    this.createRune('rune_blink', new THREE.Vector3(10, 1, 6));
+  // ✅ Spawns all runes based on the maze map definition
+  spawnFromMap(mazeMap) {
+    mazeMap.objects.runes.forEach(({ x, z, type }) => {
+      const worldX = x * tileSize + tileSize / 2.5;
+      const worldZ = z * tileSize + tileSize / 2.5;
+      const position = new THREE.Vector3(worldX, 0.5, worldZ);
+      this.createRune(type, position);
+    });
   }
 
   getRunes() {
