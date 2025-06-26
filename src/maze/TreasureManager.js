@@ -22,8 +22,10 @@ export class TreasureManager {
     });
 
     mazeMap.objects.treasures.forEach(({ x, z }) => {
-      const worldX = x * tileSize + tileSize / 2;
-      const worldZ = z * tileSize + tileSize / 2;
+      const rl = Math.random() < 0.5 ? -1 : 1;
+      const lr = Math.random() < 0.5 ? -1 : 1;
+      const worldX = x * tileSize + tileSize / (rl * 2);
+      const worldZ = z * tileSize + tileSize / (lr * 2);
       const treasure = new THREE.Mesh(
         new THREE.BoxGeometry(0.3, 0.3, 0.3),
         material

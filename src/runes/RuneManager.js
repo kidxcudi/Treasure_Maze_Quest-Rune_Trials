@@ -50,8 +50,10 @@ export class RuneManager {
   // ✅ Spawns all runes based on the maze map definition
   spawnFromMap(mazeMap) {
     mazeMap.objects.runes.forEach(({ x, z, type }) => {
-      const worldX = x * tileSize + tileSize / 2.5;
-      const worldZ = z * tileSize + tileSize / 2.5;
+      const rl = Math.random() < 0.5 ? -1 : 1;
+      const lr = Math.random() < 0.5 ? -1 : 1;
+      const worldX = x * tileSize + tileSize / (rl * 2.5);
+      const worldZ = z * tileSize + tileSize / (lr * 2.5);
       const position = new THREE.Vector3(worldX, 0.5, worldZ);
       this.createRune(type, position);
     });

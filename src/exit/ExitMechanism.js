@@ -43,8 +43,10 @@ export class ExitMechanism {
 // Helper function to spawn the exit mechanism using maze1 data
 export function spawnExitMechanism(scene, gameManager) {
   const { x, z } = maze1.objects.exitMechanism;
-  const worldX = x * tileSize + tileSize / 2;
-  const worldZ = z * tileSize + tileSize / 2;
+  const rl = Math.random() < 0.5 ? -1 : 1;
+  const lr = Math.random() < 0.5 ? -1 : 1;
+  const worldX = x * tileSize + tileSize / (rl * 2);
+  const worldZ = z * tileSize + tileSize / (lr * 2);
   const position = new THREE.Vector3(
     worldX,
     0.5,  // Height adjustment

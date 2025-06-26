@@ -1,9 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import { gameState } from '../core/gameState.js';
-import { maze1 } from '../maze/mazeLayout.js'; // <-- Adjust path if needed
-
-const tileSize = maze1.tileSize;
 
 export class PlayerController {
   constructor(camera, scene) {

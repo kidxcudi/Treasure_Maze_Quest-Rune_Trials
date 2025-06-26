@@ -31,13 +31,13 @@ export class InteractionManager {
     this.maze = maze;
     this.uiManager = uiManager;
     this.treasureManager = treasureManager;
-    this.interactionRange = 5; // Units
+    this.interactionRange = 5;
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2(0, 0);
     this.tooltip = new Tooltip();
 
-    // Track mouse position
+    // Track mouse
     document.addEventListener('mousemove', (event) => {
       this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -74,19 +74,21 @@ export class InteractionManager {
     if (hits.length === 0) return;
 
     const nearestHit = hits[0].object;
-    if (!this.isWithinRange(nearestHit)) {
+    const rootHit = this.findRootMatch(nearestHit, allTargets);
+
+    if (!rootHit || !this.isWithinRange(rootHit)) {
       this.hud?.showMessage("Too far to interact.");
       return;
     }
 
     // 🎯 Rune
-    if (this.runeManager.getRunes().includes(nearestHit)) {
-      this.pickupRune(nearestHit).catch(console.error);
+    if (this.runeManager.getRunes().includes(rootHit)) {
+      this.pickupRune(rootHit).catch(console.error);
       return;
     }
 
     // 🎯 Exit mechanism
-    if (mech && nearestHit === mech && !this.gameManager?.isExitActivated?.()) {
+    if (mech && rootHit === mech && !this.gameManager?.isExitActivated?.()) {
       if (gameState.treasuresCollected >= gameState.totalTreasures) {
         this.scene.remove(mech);
         this.hud?.showMessage("Exit activated! Hurry!");
@@ -99,26 +101,26 @@ export class InteractionManager {
     }
 
     // 🎯 Door
-    if (this.doorManager && this.doorManager.getDoors().includes(nearestHit)) {
-      this.doorManager.tryOpenDoor(nearestHit);
+    if (this.doorManager && this.doorManager.getDoors().includes(rootHit)) {
+      this.doorManager.tryOpenDoor(rootHit);
       return;
     }
 
     // 🎯 Trap
-    if (this.trapManager && this.trapManager.getTraps().includes(nearestHit)) {
-      this.trapManager.triggerTrap(nearestHit);
+    if (this.trapManager && this.trapManager.getTraps().includes(rootHit)) {
+      this.trapManager.triggerTrap(rootHit);
       return;
     }
 
     // 🎯 Treasure
-    if (this.treasureManager && this.treasureManager.getTreasures().includes(nearestHit)) {
-      this.treasureManager.collect(nearestHit);
+    if (this.treasureManager && this.treasureManager.getTreasures().includes(rootHit)) {
+      this.treasureManager.collect(rootHit);
       return;
     }
 
     // 🎯 Interactable targets
     for (let obj of this.interactables) {
-      if (nearestHit === obj && gameState.equippedRune) {
+      if (rootHit === obj && gameState.equippedRune) {
         if (obj.userData.requiredRune === gameState.equippedRune) {
           this.useRune();
           this.scene.remove(obj);
@@ -193,12 +195,35 @@ export class InteractionManager {
     return true;
   }
 
+  isWithinRange(object) {
+    if (!this.player?.controls?.object || !object?.position) return false;
+
+    const playerPos = this.player.controls.object.position;
+
+    // Walk up the parent chain to find a mesh with position
+    let target = object;
+    while (target && !target.position && target.parent) {
+      target = target.parent;
+    }
+
+    return target?.position && playerPos.distanceTo(target.position) <= this.interactionRange;
+  }
+
+  findRootMatch(object, targets) {
+    let current = object;
+    while (current) {
+      if (targets.includes(current)) return current;
+      current = current.parent;
+    }
+    return null;
+  }
+
   getEquippedRune() {
     return gameState.equippedRune;
   }
 
   update() {
-    // Future enhancements: hover highlights, tooltips, etc.
+    // Optional future enhancements (e.g., hover detection)
   }
 
   getEffectContext(runeName) {
@@ -212,19 +237,5 @@ export class InteractionManager {
       default:
         return this.scene;
     }
-  }
-
-  isWithinRange(object) {
-    if (!this.player?.controls?.object || !object?.position) return false;
-
-    const playerPos = this.player.controls.object.position;
-
-    // Walk up the parent chain to find a positioned mesh
-    let target = object;
-    while (target && !target.position && target.parent) {
-      target = target.parent;
-    }
-
-    return target?.position && playerPos.distanceTo(target.position) <= this.interactionRange;
   }
 }
