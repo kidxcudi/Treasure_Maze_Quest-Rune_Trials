@@ -80,7 +80,7 @@ export class GameManager {
     this.hud?.updateTimer(0);
 
     // NEW: stop player movement and show cursor
-    // this.player.controls.unlock();               // Disable PointerLock
+    this.player.controls.unlock();               // Disable PointerLock
     document.exitPointerLock?.();                // Fallback
     document.body.style.cursor = 'auto';         // Show cursor
 
@@ -98,7 +98,7 @@ export class GameManager {
     this.hud?.updateTimer(0);
 
     // NEW: stop player movement and show cursor
-    // this.player.controls.unlock();               // Disable PointerLock
+    this.player.controls.unlock();               // Disable PointerLock
     document.exitPointerLock?.();
     document.body.style.cursor = 'auto';
 

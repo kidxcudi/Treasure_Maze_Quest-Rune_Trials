@@ -15,6 +15,7 @@ export class PlayerController {
     this.velocity = new THREE.Vector3();
     this.direction = new THREE.Vector3();
     this.speed = 5;
+    this.controlsInverted = false;  // initialize here
 
     // Controls
     this.controls = new PointerLockControls(camera, document.body);
@@ -22,7 +23,9 @@ export class PlayerController {
 
     // Pointer lock click to enable
     document.addEventListener('click', () => {
-      this.controls.lock();
+      if (!gameState.gameOver) {
+        this.controls.lock();
+      }
     });
 
     // Movement keys
@@ -49,16 +52,18 @@ export class PlayerController {
   }
 
   update(deltaTime) {
-    if (gameState.movementLocked) return; // block movement if locked
+    if (gameState.movementLocked) return;
     if (!this.controls.isLocked) return;
 
     this.velocity.set(0, 0, 0);
     this.direction.set(0, 0, 0);
 
-    if (this.moveForward) this.direction.z += 1;
-    if (this.moveBackward) this.direction.z -= 1;
-    if (this.moveLeft) this.direction.x -= 1;
-    if (this.moveRight) this.direction.x += 1;
+    const forward = this.controlsInverted ? -1 : 1;
+
+    if (this.moveForward) this.direction.z += 1 * forward;
+    if (this.moveBackward) this.direction.z -= 1 * forward;
+    if (this.moveLeft) this.direction.x -= 1 * forward;
+    if (this.moveRight) this.direction.x += 1 * forward;
 
     this.direction.normalize();
 
@@ -69,4 +74,54 @@ export class PlayerController {
     this.controls.moveForward(moveZ);
   }
 
+  setSpeedMultiplier(multiplier) {
+    this.speed = 5 * multiplier;
+  }
+
+  invertControls(stepDuration = 10) {
+    this.controlsInverted = true;
+    gameState.invertedSteps = 0;
+    gameState.maxInvertedSteps = stepDuration;
+
+    const stepHandler = () => {
+      gameState.invertedSteps++;
+      if (gameState.invertedSteps >= gameState.maxInvertedSteps) {
+        this.controlsInverted = false;
+        window.removeEventListener('keydown', stepHandler);
+      }
+    };
+
+    window.addEventListener('keydown', stepHandler);
+  }
+
+  stunMovement(stepDuration = 5) {
+    gameState.movementLocked = true;
+    gameState.stunSteps = 0;
+    gameState.maxStunSteps = stepDuration;
+
+    const stepHandler = () => {
+      gameState.stunSteps++;
+      if (gameState.stunSteps >= gameState.maxStunSteps) {
+        gameState.movementLocked = false;
+        window.removeEventListener('keydown', stepHandler);
+      }
+    };
+
+    window.addEventListener('keydown', stepHandler);
+  }
+
+  // New method for effect durations
+  applyEffectDuration(effectName, steps, onExpire) {
+    let stepCount = 0;
+
+    const stepListener = () => {
+      stepCount++;
+      if (stepCount >= steps) {
+        window.removeEventListener('keydown', stepListener);
+        onExpire?.();
+      }
+    };
+
+    window.addEventListener('keydown', stepListener);
+  }
 }
