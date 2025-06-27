@@ -10,7 +10,7 @@ export class DoorManager {
       locked: true
     }];
 
-    this.doors[0].mesh.material.color.set(0x4444ff); // locked color
+    this.doors[0].mesh.material.color.set(0xffffff); // locked color
   }
 
   getDoors() {
@@ -32,6 +32,7 @@ export class DoorManager {
     }
 
     doorData.isOpen = true;
+    this.exitDoor.setOpen(); 
 
     this.gameManager?.hud?.showMessage("The door is open! Go!");
     console.log("🚪 Door is now passable");
@@ -42,7 +43,7 @@ export class DoorManager {
     if (!doorData) return;
 
     doorData.locked = false;
-    doorData.mesh.material.color.set(0xADD8E6); // light blue
+    this.exitDoor.setUnlocked(); // ✅ use method, not mesh.material
     console.log("🔓 Door unlocked!");
   }
 

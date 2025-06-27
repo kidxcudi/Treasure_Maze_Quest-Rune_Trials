@@ -32,8 +32,8 @@ export class GameManager {
     }
 
     gameState.timerRunning = false;
-    this.exitDoor.locked = true;
-    this.exitDoor.doorMesh.material.color.set(0x4444ff);
+    this.exitDoor.setLocked();
+
   }
 
   triggerExitTimer() {
@@ -44,8 +44,8 @@ export class GameManager {
     this.exitActivated = true;
     this.timerActive = true;
 
-    this.doorManager.unlock(); // ✅ unlock through manager
-    this.exitDoor.locked = false; // also update exitDoor itself
+    this.doorManager.unlock();
+    this.exitDoor.setUnlocked(); // also update exitDoor itself
 
     gameState.timerRunning = true;
     this.hud?.startTimer?.(this.exitCountdown);
