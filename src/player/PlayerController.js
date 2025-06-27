@@ -11,13 +11,20 @@ export class PlayerController {
     this.moveBackward = false;
     this.moveLeft = false;
     this.moveRight = false;
+
     this.velocity = new THREE.Vector3();
     this.direction = new THREE.Vector3();
-    this.speed = 5;
+    this.baseSpeed = 5;
+    this.speed = this.baseSpeed;
     this.controlsInverted = false;
 
     this.controls = new PointerLockControls(camera, document.body);
     scene.add(this.controls.object);
+
+    // Quicksand state
+    this.isInQuicksand = false;
+    this.quicksandTimer = 0;
+    this.quicksandStartY = null; // Store starting Y when entering quicksand
 
     document.addEventListener('click', () => {
       if (!gameState.gameOver) this.controls.lock();
@@ -64,10 +71,57 @@ export class PlayerController {
 
     this.controls.moveRight(moveX);
     this.controls.moveForward(moveZ);
+
+    if (this.isInQuicksand) {
+      this.quicksandTimer += deltaTime;
+
+      const obj = this.controls.object;
+      const minSink = this.quicksandStartY - 0.5; // max sinking depth
+      if (obj.position.y > minSink) {
+        obj.position.y -= 0.005; // sink slowly
+        if (obj.position.y < minSink) obj.position.y = minSink; // clamp
+      }
+
+      // if (this.quicksandTimer > 5) {
+      //   console.log("⚠ Quicksand: You've been trapped too long!");
+      //   gameState.movementLocked = true; // optional trap lock
+      //   this.exitQuicksand();
+      // }
+    }
   }
 
-  setSpeedMultiplier(multiplier) {
-    this.speed = 5 * multiplier;
+  setMovementSpeed(multiplier) {
+    this.speed = this.baseSpeed * multiplier;
+  }
+
+  resetMovementSpeed() {
+    this.speed = this.baseSpeed;
+  }
+
+  applyQuicksandEffect() {
+    if (!this.isInQuicksand) {
+      this.isInQuicksand = true;
+      this.quicksandTimer = 0;
+      this.quicksandStartY = this.controls.object.position.y;
+      this.setMovementSpeed(0.1);  // slow down
+    }
+  }
+
+  exitQuicksand() {
+    if (this.isInQuicksand) {
+      this.isInQuicksand = false;
+      this.quicksandTimer = 0;
+      this.resetMovementSpeed();
+
+      const obj = this.controls.object;
+      obj.position.y = this.quicksandStartY; // reset height exactly
+      this.quicksandStartY = null;
+
+      // Unlock movement if locked
+      if (gameState.movementLocked) {
+        gameState.movementLocked = false;
+      }
+    }
   }
 
   invertControls(stepDuration = 10) {
@@ -104,7 +158,6 @@ export class PlayerController {
 
   applyEffectDuration(effectName, steps, onExpire) {
     let stepCount = 0;
-
     const stepListener = () => {
       stepCount++;
       if (stepCount >= steps) {
@@ -112,7 +165,6 @@ export class PlayerController {
         onExpire?.();
       }
     };
-
     window.addEventListener('keydown', stepListener);
   }
 }

@@ -5,7 +5,7 @@ import { spawnEasterEgg } from '../secrets/SecretWalls.js';
 export const tileSize = maze1.tileSize;
 const wallHeight = tileSize * 2;
 
-export function buildMaze(scene) {
+export function buildMaze(scene, secretObjects = []) {
   const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1f22 });
   const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xd8cab8 });
 
@@ -55,7 +55,7 @@ export function buildMaze(scene) {
   }
 
   maze1.objects.easterEggs.forEach(egg => {
-    spawnEasterEgg(egg, scene);
+    spawnEasterEgg(egg, scene, secretObjects);
   });
 
 

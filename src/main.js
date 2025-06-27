@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PlayerController } from './player/PlayerController.js';
 import { initScene } from './initScene.js';
 import { buildMaze } from './maze/MazeBuilder.js';
-import { checkCollision } from './core/Collision.js';
+import { initWallColliders, checkCollision } from './core/Collision.js';
 import { RuneManager } from './runes/RuneManager.js';
 import { InteractionManager } from './core/interactions.js';
 import { gameState } from './core/gameState.js';
@@ -15,10 +15,12 @@ import { DoorManager } from './exit/DoorManager.js';
 import { InputHandler } from './core/InputHandler.js';
 import { TreasureManager } from './maze/TreasureManager.js';
 import { maze1 } from './maze/mazeLayout.js'; // For tileSize and maze data
+import { handleSecretCollision } from './secrets/SecretWalls.js';
 
 let scene, camera, renderer, clock;
 let player;
 let walls = [];
+let secretObjects = [];
 
 let runeManager, interactionManager;
 
@@ -31,8 +33,9 @@ function init() {
   clock = new THREE.Clock();
 
   // Maze & walls
-  const maze = buildMaze(scene);
+  const maze = buildMaze(scene, secretObjects);
   walls = maze.walls;
+  initWallColliders(walls, scene, true);
 
   // Optional: replace with your actual UI manager if used
   const uiManager = null;
@@ -110,12 +113,37 @@ function init() {
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
+  const hud = new HUD();
 
   const prevPos = player.controls.object.position.clone();
   player.update(delta);
 
-  if (checkCollision(player.controls.object.position, walls)) {
-    player.controls.object.position.copy(prevPos);
+  if (checkCollision(player.controls.object.position)) {
+    player.controls.object.position.copy(prevPos); // revert if hit
+  }
+
+  // Track quicksand presence this frame
+  let insideQuicksand = false;
+
+  for (let obj of secretObjects) {
+    const box = new THREE.Box3().setFromObject(obj);
+    const playerPos = player.controls.object.position.clone();
+
+    if (box.containsPoint(playerPos)) {
+      if (obj.userData.isQuicksand) {
+        insideQuicksand = true;
+        hud.showMessage("⚠ You're stuck in quicksand!");
+      } else {
+        handleSecretCollision(obj, player, scene, hud);
+      }
+    }
+  }
+
+  // Apply or exit quicksand once per frame
+  if (insideQuicksand) {
+    player.applyQuicksandEffect();
+  } else {
+    player.exitQuicksand();
   }
 
   interactionManager?.update(delta);
@@ -123,5 +151,6 @@ function animate() {
 
   renderer.render(scene, camera);
 }
+
 
 window.onload = init;

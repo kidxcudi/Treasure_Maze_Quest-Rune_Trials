@@ -33,7 +33,7 @@ export const maze1 = {
       { x: 3, z: 2, type: "pass_through" },
       { x: 8, z: 7, type: "breakable" },
       { x: 4, z: 5, type: "low_wall" },
-      { x: 5, z: 2, type: "hole" }
+      { x: 5, z: 2, type: "quicksand" }
     ],
   },
 };
