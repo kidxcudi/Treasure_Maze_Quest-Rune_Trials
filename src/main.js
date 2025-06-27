@@ -47,7 +47,7 @@ function init() {
   const start = maze1.objects.playerStart;
   player.controls.object.position.set(
     start.x * maze1.tileSize,
-    1,
+    50,
     start.z * maze1.tileSize
   );
 

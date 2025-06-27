@@ -202,45 +202,60 @@ rune_flight: {
   },
 
    rune_vision: {
-    activate(player, scene, hud) {
-      const visionDuration = 5000; // 5 seconds
-      hud?.showMessage("Your eyes glow with insight...");
+  activate(player, scene, hud) {
+    const visionDuration = 5000;
+    hud?.showMessage("Your eyes glow with insight...");
 
-      // Find treasures in scene
-      const treasures = [];
-      scene.traverse(obj => {
-        if (obj.userData?.isTreasure) {
-          treasures.push(obj);
+    const xrayTargets = [];
+    const originalMaterials = new Map();
+
+    // 1. Highlight treasures (gold)
+    scene.traverse(obj => {
+      if (obj.userData?.isTreasure) {
+        xrayTargets.push({ obj, color: 0xffff00 }); // gold
+      }
+    });
+
+    // 2. Highlight exit door (blue)
+    const exitDoor = scene.getObjectByName("exit_door");
+    if (exitDoor) {
+      xrayTargets.push({ obj: exitDoor, color: 0x42a5f5 }); // light blue
+    }
+
+    // 3. Highlight breakable/pass-through walls (gray)
+    scene.traverse(obj => {
+      if (obj.userData?.breakable || obj.userData?.passThrough) {
+        xrayTargets.push({ obj, color: 0x999999 }); // soft gray
+      }
+    });
+
+    // Apply ghost materials
+    xrayTargets.forEach(({ obj, color }) => {
+      if (!obj.material) return;
+      originalMaterials.set(obj, obj.material);
+
+      obj.material = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.4,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+    });
+
+    // Restore after time
+    setTimeout(() => {
+      xrayTargets.forEach(({ obj }) => {
+        if (originalMaterials.has(obj)) {
+          obj.material.dispose?.();
+          obj.material = originalMaterials.get(obj);
         }
       });
 
-      const originalMaterials = new Map();
+      hud?.showMessage("The vision fades...");
+    }, visionDuration);
+  }
+},
 
-      // Apply "x-ray" effect
-      treasures.forEach(treasure => {
-        if (!treasure.material) return;
-
-        originalMaterials.set(treasure, treasure.material);
-
-        treasure.material = new THREE.MeshBasicMaterial({
-          color: 0xffff00,
-          transparent: true,
-          opacity: 0.6,
-          depthTest: false,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending
-        });
-      });
-
-      // Revert after visionDuration
-      setTimeout(() => {
-        treasures.forEach(treasure => {
-          if (originalMaterials.has(treasure)) {
-            treasure.material = originalMaterials.get(treasure);
-          }
-        });
-        hud?.showMessage("The vision fades...");
-      }, visionDuration);
-    }
-   },
 };

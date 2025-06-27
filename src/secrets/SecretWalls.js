@@ -13,11 +13,10 @@ export function spawnEasterEgg({ x, z, type }, scene, secretObjects) {
     case 'pass_through':
       const wall1 = new THREE.Mesh(
         new THREE.BoxGeometry(tileSize, tileSize * 2, tileSize),
-        new THREE.MeshStandardMaterial({ color: 0x1c1f22, transparent: true, opacity: 0.986 })
+        new THREE.MeshStandardMaterial({ color: 0x1c1f22, transparent: true, opacity: 0.98 })
       );
       wall1.position.set(posX, tileSize, posZ);
       wall1.userData.passThrough = true;
-      wall1.userData.isTreasureHidden = true;
       scene.add(wall1);
       break;
 
@@ -29,7 +28,6 @@ export function spawnEasterEgg({ x, z, type }, scene, secretObjects) {
       wall2.position.set(posX, tileSize, posZ);
       wall2.userData.breakable = true;
       wall2.userData.isObstacle = true;
-      wall2.userData.isTreasureHidden = true;
       scene.add(wall2);
       secretObjects.push(wall2);
       createdMesh = wall2;

@@ -28,7 +28,7 @@ export class ExitDoor {
   }
 
   createDoorMesh() {
-    const geometry = new THREE.BoxGeometry(2, 4, 0.3);
+    const geometry = new THREE.BoxGeometry(2, 3, 0.3);
     const material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       transparent: true,
@@ -38,7 +38,6 @@ export class ExitDoor {
     });
 
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.isTreasure = true;
     return mesh;
   }
 
@@ -48,7 +47,7 @@ export class ExitDoor {
 
     const barThickness = 0.25;
     const doorWidth = 2;
-    const doorHeight = 4;
+    const doorHeight = 3;
 
     const yOffset = 0;
 
@@ -124,11 +123,12 @@ export class ExitDoor {
 
 export function spawnExitDoor(scene) {
   const { x, z } = maze1.objects.exit;
+  const doorHeight = 3;
   const rl = Math.random() < 0.5 ? -1 : 1;
   const lr = Math.random() < 0.5 ? -1 : 1;
   const worldX = x * tileSize + tileSize / (rl * 2);
   const worldZ = z * tileSize + tileSize / (lr * 2);
-  const position = new THREE.Vector3(worldX, 1, worldZ);
+  const position = new THREE.Vector3(worldX, doorHeight / 2, worldZ);
 
   return new ExitDoor(scene, position);
 }
