@@ -15,10 +15,10 @@ export function initWallColliders(walls, scene = null, debug = false) {
     wall.updateMatrixWorld(true); // Ensure world matrix is updated
     const box = new THREE.Box3().setFromObject(wall);
 
-    if (debug && scene) {
-      const helper = new THREE.Box3Helper(box, 0xff0000);
-      scene.add(helper);
-    }
+    // if (debug && scene) {
+    //   const helper = new THREE.Box3Helper(box, 0xff0000);
+    //   scene.add(helper);
+    // }
 
     return { mesh: wall, box };
   });

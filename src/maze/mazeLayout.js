@@ -21,8 +21,9 @@ export const maze1 = {
       { x: 5, z: 3, type: "rune_flight" },
       { x: 5, z: 8, type: "rune_blink" },
       { x: 5, z: 2, type: "rune_strength" },
-      { x: 4, z: 5, type: "rune_speed" },
+      { x: 2, z: 5, type: "rune_speed" },
       { x: 6, z: 3, type: "rune_vision" },
+
       { x: 5, z: 9, type: "rune_blink", isTrap: true },
       { x: 7, z: 3, type: "rune_strength", isTrap: true }
     ],

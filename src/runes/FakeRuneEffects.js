@@ -55,28 +55,37 @@ export const FakeRuneEffects = {
   },
 
   rune_void: {
-    onEquip(player, gameState, hud, scene) {
-      hud?.showMessage("A void swallows your vision!");
+  onEquip(player, gameState, hud, scene) {
+    hud?.showMessage("A void swallows your vision!");
 
-      const affectedMeshes = [];
+    const affectedMeshes = [];
 
-      scene.traverse(obj => {
-        if (obj.isMesh && obj.visible && !obj.userData.isFakeWall) {
-          obj.visible = false;
-          affectedMeshes.push(obj);
-        }
-      });
+    // Hide all meshes except designated fake walls
+    scene.traverse(obj => {
+      if (obj.isMesh && obj.visible && !obj.userData.isFakeWall) {
+        obj.visible = false;
+        affectedMeshes.push(obj);
+      }
+    });
 
-      player.disableVision = true;
+    // Show dark overlay
+    const overlay = document.getElementById('vision-overlay');
+    if (overlay) overlay.style.opacity = '0.95';
 
-      player.applyEffectDuration("vision_blind", 7, () => {
-        affectedMeshes.forEach(obj => obj.visible = true);
-        player.disableVision = false;
-        hud?.showMessage("Your vision returns.");
+    player.disableVision = true;
 
-        gameState.equippedRune = null;
-        hud?.updateRuneDisplay(null);
-      });
-    },
-  },
+    player.applyEffectDuration("vision_blind", 7, () => {
+      // Restore visibility
+      affectedMeshes.forEach(obj => obj.visible = true);
+      player.disableVision = false;
+
+      // Hide overlay
+      if (overlay) overlay.style.opacity = '0';
+
+      hud?.showMessage("Your vision returns.");
+      gameState.equippedRune = null;
+      hud?.updateRuneDisplay(null);
+    });
+  }
+},
 };
