@@ -18,8 +18,7 @@ export class ExitTriggerZone {
     const doorPos = this.exitDoor.getObject().position.clone();
 
     const distance = playerPos.distanceTo(doorPos);
-
-    if (distance < 2) {
+    if (distance < 1) {
       this.activated = true;
       this.gameManager.winGame();
     }
