@@ -45,8 +45,8 @@ export function spawnExitMechanism(scene, gameManager) {
   const { x, z } = maze1.objects.exitMechanism;
   const rl = Math.random() < 0.5 ? -1 : 1;
   const lr = Math.random() < 0.5 ? -1 : 1;
-  const worldX = x * tileSize + tileSize / (rl * 2);
-  const worldZ = z * tileSize + tileSize / (lr * 2);
+  const worldX = x * tileSize + tileSize / (rl * 2.1);
+  const worldZ = z * tileSize + tileSize / (lr * 2.1);
   const position = new THREE.Vector3(
     worldX,
     0.5,  // Height adjustment

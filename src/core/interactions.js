@@ -17,7 +17,7 @@ export class InteractionManager {
     gameManager = null,
     maze = null,
     uiManager = null,
-    treasureManager = null
+    treasureManager = null // ✅ New
   ) {
     this.camera = camera;
     this.scene = scene;
@@ -30,20 +30,11 @@ export class InteractionManager {
     this.gameManager = gameManager;
     this.maze = maze;
     this.uiManager = uiManager;
-    this.treasureManager = treasureManager;
-    this.interactionRange = 5;
+    this.treasureManager = treasureManager; // ✅ Store
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2(0, 0);
-    this.tooltip = new Tooltip();
 
-    // Track mouse
-    document.addEventListener('mousemove', (event) => {
-      this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-      this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-    });
-
-    // Handle clicks
     document.addEventListener('click', (e) => {
       if (gameState.gameOver) {
         e.preventDefault();
@@ -54,78 +45,77 @@ export class InteractionManager {
     });
   }
 
+  tooltip = new Tooltip();
+
   handleClick() {
     if (!this.camera || !this.scene) return;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
+    this.raycaster.far = 3; // or any distance you want in world units
 
-    const allTargets = [
-      ...this.runeManager.getRunes(),
-      ...(this.doorManager?.getDoors?.() || []),
-      ...(this.trapManager?.getTraps?.() || []),
-      ...(this.treasureManager?.getTreasures?.() || []),
-      ...(this.interactables || []),
-    ];
 
-    const mech = this.scene.getObjectByName("exit_mechanism");
-    if (mech) allTargets.push(mech);
-
-    const hits = this.raycaster.intersectObjects(allTargets, true);
-    if (hits.length === 0) return;
-
-    const nearestHit = hits[0].object;
-    const rootHit = this.findRootMatch(nearestHit, allTargets);
-
-    if (!rootHit || !this.isWithinRange(rootHit)) {
-      this.hud?.showMessage("Too far to interact.");
-      return;
-    }
-
-    // 🎯 Rune
-    if (this.runeManager.getRunes().includes(rootHit)) {
-      this.pickupRune(rootHit).catch(console.error);
+    // 🎯 Rune pickup
+    const runeHits = this.raycaster.intersectObjects(this.runeManager.getRunes(), true);
+    if (runeHits.length > 0) {
+      this.pickupRune(runeHits[0].object).catch(console.error);
       return;
     }
 
     // 🎯 Exit mechanism
-    if (mech && rootHit === mech && !this.gameManager?.isExitActivated?.()) {
-      if (gameState.treasuresCollected >= gameState.totalTreasures) {
-        this.scene.remove(mech);
-        this.hud?.showMessage("Exit activated! Hurry!");
-        this.gameManager?.triggerExitTimer?.();
-      } else {
-        const missing = gameState.totalTreasures - gameState.treasuresCollected;
-        this.hud?.showMessage(`You still need ${missing} treasure${missing > 1 ? 's' : ''}...`);
+    const mech = this.scene.getObjectByName("exit_mechanism");
+    if (mech && !this.gameManager?.isExitActivated?.()) {
+      const mechHit = this.raycaster.intersectObject(mech, true);
+      if (mechHit.length > 0) {
+        if (gameState.treasuresCollected >= gameState.totalTreasures) {
+          console.log("✅ All treasures collected. Exit activated.");
+          this.scene.remove(mech);
+          this.hud?.showMessage("Exit activated! Hurry!");
+          this.gameManager?.triggerExitTimer?.();
+        } else {
+          const missing = gameState.totalTreasures - gameState.treasuresCollected;
+          this.hud?.showMessage(`You still need ${missing} treasure${missing > 1 ? 's' : ''}...`);
+        }
+        return;
       }
-      return;
     }
 
-    // 🎯 Door
-    if (this.doorManager && this.doorManager.getDoors().includes(rootHit)) {
-      this.doorManager.tryOpenDoor(rootHit);
-      return;
+
+    // 🎯 Exit door
+    if (this.doorManager) {
+      const doorHits = this.raycaster.intersectObjects(this.doorManager.getDoors(), true);
+      if (doorHits.length > 0) {
+        this.doorManager.tryOpenDoor(doorHits[0].object);
+        return;
+      }
     }
 
-    // 🎯 Trap
-    if (this.trapManager && this.trapManager.getTraps().includes(rootHit)) {
-      this.trapManager.triggerTrap(rootHit);
-      return;
+    // 🎯 Trap trigger
+    if (this.trapManager) {
+      const trapHits = this.raycaster.intersectObjects(this.trapManager.getTraps(), true);
+      if (trapHits.length > 0) {
+        this.trapManager.triggerTrap(trapHits[0].object);
+        return;
+      }
     }
 
-    // 🎯 Treasure
-    if (this.treasureManager && this.treasureManager.getTreasures().includes(rootHit)) {
-      this.treasureManager.collect(rootHit);
-      return;
+    // 🎯 Treasure pickup
+    if (this.treasureManager) {
+      const treasureHits = this.raycaster.intersectObjects(this.treasureManager.getTreasures(), true);
+      if (treasureHits.length > 0) {
+        this.treasureManager.collect(treasureHits[0].object);
+        return;
+      }
     }
 
-    // 🎯 Interactable targets
+    // 🎯 Interactable rune-use targets
     for (let obj of this.interactables) {
-      if (rootHit === obj && gameState.equippedRune) {
+      const hits = this.raycaster.intersectObject(obj, true);
+      if (hits.length > 0 && gameState.equippedRune) {
         if (obj.userData.requiredRune === gameState.equippedRune) {
           this.useRune();
           this.scene.remove(obj);
         } else {
-          this.hud?.showMessage("Wrong rune!");
+          console.log("Wrong rune!");
         }
         return;
       }
@@ -195,35 +185,12 @@ export class InteractionManager {
     return true;
   }
 
-  isWithinRange(object) {
-    if (!this.player?.controls?.object || !object?.position) return false;
-
-    const playerPos = this.player.controls.object.position;
-
-    // Walk up the parent chain to find a mesh with position
-    let target = object;
-    while (target && !target.position && target.parent) {
-      target = target.parent;
-    }
-
-    return target?.position && playerPos.distanceTo(target.position) <= this.interactionRange;
-  }
-
-  findRootMatch(object, targets) {
-    let current = object;
-    while (current) {
-      if (targets.includes(current)) return current;
-      current = current.parent;
-    }
-    return null;
-  }
-
   getEquippedRune() {
     return gameState.equippedRune;
   }
 
   update() {
-    // Optional future enhancements (e.g., hover detection)
+    // Future enhancements: hover highlights, tooltips, etc.
   }
 
   getEffectContext(runeName) {

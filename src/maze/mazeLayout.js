@@ -16,7 +16,7 @@ export const maze1 = {
   objects: {
     playerStart: { x: 1, z: 3 },
     exit: { x: 9, z: 9 },
-    exitMechanism: { x: 1, z: 9 },
+    exitMechanism: { x: 3, z: 9 },
     runes: [
       { x: 5, z: 1, type: "rune_flight" },
       { x: 5, z: 8, type: "rune_blink" },
@@ -30,8 +30,10 @@ export const maze1 = {
       { x: 9, z: 5 },
     ],
     easterEggs: [
-      { x: 3, z: 2 },
-      { x: 8, z: 7 },
+      { x: 3, z: 2, type: "pass_through" },
+      { x: 8, z: 7, type: "breakable" },
+      { x: 4, z: 5, type: "low_wall" },
+      { x: 5, z: 2, type: "hole" }
     ],
   },
 };

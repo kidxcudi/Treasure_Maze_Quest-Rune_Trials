@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { maze1 } from './mazeLayout.js';
+import { spawnEasterEgg } from '../secrets/SecretWalls.js';
 
 export const tileSize = maze1.tileSize;
 const wallHeight = tileSize * 2;
@@ -52,6 +53,11 @@ export function buildMaze(scene) {
       }
     }
   }
+
+  maze1.objects.easterEggs.forEach(egg => {
+    spawnEasterEgg(egg, scene);
+  });
+
 
   function blockAllPaths(steps = 10) {
     openTiles.forEach(tile => tile.mesh.visible = true);
