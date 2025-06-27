@@ -17,7 +17,7 @@ export class InteractionManager {
     gameManager = null,
     maze = null,
     uiManager = null,
-    treasureManager = null // ✅ New
+    treasureManager = null
   ) {
     this.camera = camera;
     this.scene = scene;
@@ -30,7 +30,7 @@ export class InteractionManager {
     this.gameManager = gameManager;
     this.maze = maze;
     this.uiManager = uiManager;
-    this.treasureManager = treasureManager; // ✅ Store
+    this.treasureManager = treasureManager;
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2(0, 0);
@@ -47,21 +47,61 @@ export class InteractionManager {
 
   tooltip = new Tooltip();
 
+  removeInteractable(object) {
+  if (!object || !this.interactables) {
+    console.warn("🔥 Invalid object or interactables array");
+    return false;
+  }
+
+  // Debug: Log before removal
+  console.groupCollapsed(`🔥 Removing interactable: ${object.name || object.uuid}`);
+  console.log("Current interactables:", this.interactables.length);
+  console.log("Object details:", object);
+
+  // 1. Remove from interactables array
+  const index = this.interactables.findIndex(
+    item => item === object || item.uuid === object.uuid
+  );
+  
+  if (index !== -1) {
+    this.interactables.splice(index, 1);
+    console.log("✅ Removed from interactables array");
+  } else {
+    console.warn("❌ Object not found in interactables");
+  }
+
+  // 2. Remove from scene if it exists there
+  if (object.parent === this.scene) {
+    this.scene.remove(object);
+    console.log("✅ Removed from scene");
+  } else if (object.parent) {
+    console.warn(`⚠️ Object parent is ${object.parent.type}, not scene`);
+  }
+
+  // 3. Clean up any residual references
+  if (object.userData) {
+    object.userData.isInteractable = false;
+    object.userData.isObstacle = false;
+  }
+
+  console.groupEnd();
+  return true;
+}
+
   handleClick() {
     if (!this.camera || !this.scene) return;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    this.raycaster.far = 3; // or any distance you want in world units
+    this.raycaster.far = 3;
 
-
-    // 🎯 Rune pickup
+    // Rune pickup
     const runeHits = this.raycaster.intersectObjects(this.runeManager.getRunes(), true);
     if (runeHits.length > 0) {
       this.pickupRune(runeHits[0].object).catch(console.error);
       return;
     }
 
-    // 🎯 Exit mechanism
+    // Exit mechanism
     const mech = this.scene.getObjectByName("exit_mechanism");
     if (mech && !this.gameManager?.isExitActivated?.()) {
       const mechHit = this.raycaster.intersectObject(mech, true);
@@ -79,8 +119,7 @@ export class InteractionManager {
       }
     }
 
-
-    // 🎯 Exit door
+    // Exit door
     if (this.doorManager) {
       const doorHits = this.raycaster.intersectObjects(this.doorManager.getDoors(), true);
       if (doorHits.length > 0) {
@@ -89,7 +128,7 @@ export class InteractionManager {
       }
     }
 
-    // 🎯 Trap trigger
+    // Trap trigger
     if (this.trapManager) {
       const trapHits = this.raycaster.intersectObjects(this.trapManager.getTraps(), true);
       if (trapHits.length > 0) {
@@ -98,7 +137,7 @@ export class InteractionManager {
       }
     }
 
-    // 🎯 Treasure pickup
+    // Treasure pickup
     if (this.treasureManager) {
       const treasureHits = this.raycaster.intersectObjects(this.treasureManager.getTreasures(), true);
       if (treasureHits.length > 0) {
@@ -107,13 +146,13 @@ export class InteractionManager {
       }
     }
 
-    // 🎯 Interactable rune-use targets
+    // Interactable rune-use targets
     for (let obj of this.interactables) {
       const hits = this.raycaster.intersectObject(obj, true);
       if (hits.length > 0 && gameState.equippedRune) {
         if (obj.userData.requiredRune === gameState.equippedRune) {
           this.useRune();
-          this.scene.remove(obj);
+          this.removeInteractable(obj); // <-- use the removal helper here
         } else {
           console.log("Wrong rune!");
         }

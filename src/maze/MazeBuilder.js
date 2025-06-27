@@ -55,7 +55,10 @@ export function buildMaze(scene, secretObjects = []) {
   }
 
   maze1.objects.easterEggs.forEach(egg => {
-    spawnEasterEgg(egg, scene, secretObjects);
+    const specialWall = spawnEasterEgg(egg, scene, secretObjects);
+    if (specialWall) {
+      walls.push(specialWall);
+    }
   });
 
 
