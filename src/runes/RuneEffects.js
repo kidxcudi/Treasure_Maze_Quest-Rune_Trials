@@ -8,7 +8,7 @@ rune_flight: {
     const flightHeight = 3;
     const duration = 3000;
     const cameraHeight = 1.6; // Typical eye-level height in FPS games
-    const collisionRadius = 0.3; // Conservative estimate for player width
+    const collisionRadius = 0.2; // Conservative estimate for player width
 
     // 1. Ascend immediately
     camera.position.y += flightHeight;
@@ -192,10 +192,10 @@ rune_flight: {
 
   rune_speed: {
     activate(player, scene, hud) {
-      player.setSpeedMultiplier(2);
+      player.setMovementSpeed(2);
       hud?.showMessage("You feel a burst of speed!");
       setTimeout(() => {
-        player.setSpeedMultiplier(1);
+        player.setMovementSpeed(1);
         hud?.showMessage("Speed fades.");
       }, 4000);
     },

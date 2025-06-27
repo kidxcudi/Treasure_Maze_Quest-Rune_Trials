@@ -1,6 +1,8 @@
+// src/runes/RuneManager.js
+
 import * as THREE from 'three';
 import { RuneTypes } from './RuneTypes.js';
-import { maze1 } from '../maze/mazeLayout.js'; // <-- Adjust path if needed
+import { maze1 } from '../maze/mazeLayout.js';
 
 const tileSize = maze1.tileSize;
 
@@ -8,25 +10,34 @@ export class RuneManager {
   constructor(scene) {
     this.scene = scene;
     this.runes = [];
-    this.fakeChance = Math.random() * (0.35 - 0.25) + 0.25;
+
+    // Collect all trap-only rune types
+    this.trapRuneKeys = Object.keys(RuneTypes).filter(key => RuneTypes[key].isTrap);
   }
 
-  createRune(baseName, position) {
-    const baseData = RuneTypes[baseName];
-    if (!baseData) return;
+  getRandomTrapRuneName() {
+    const randomIndex = Math.floor(Math.random() * this.trapRuneKeys.length);
+    return this.trapRuneKeys[randomIndex];
+  }
 
-    let assignedName = baseName;
+  createRune(baseName, position, forceTrap = false) {
+    let visualName = baseName;                   // what it looks like
+    let effectName = baseName;                   // what it actually does
     let isTrap = false;
 
-    // Randomly convert to fake rune
-    if (baseData.fakeVariant && Math.random() < this.fakeChance) {
-      assignedName = baseData.fakeVariant;
+    if (forceTrap) {
+      effectName = this.getRandomTrapRuneName(); // pick a random trap effect
       isTrap = true;
     }
 
+    const visualData = RuneTypes[visualName];
+    const effectData = RuneTypes[effectName];
+
+    if (!visualData || !effectData) return;
+
     const material = new THREE.MeshStandardMaterial({
-      color: baseData.color,
-      emissive: baseData.color,
+      color: visualData.color,
+      emissive: visualData.color,
       emissiveIntensity: 1,
     });
 
@@ -35,11 +46,11 @@ export class RuneManager {
       material
     );
 
-    rune.name = assignedName;
+    rune.name = effectName; // used for effect logic
     rune.userData = {
-      label: baseData.label,
+      label: visualData.label,         // what it looks like to the player
       isTrap,
-      displayName: baseName,
+      displayName: visualName,         // true origin (for tooltip or debugging)
     };
 
     rune.position.copy(position);
@@ -47,15 +58,15 @@ export class RuneManager {
     this.runes.push(rune);
   }
 
-  // ✅ Spawns all runes based on the maze map definition
   spawnFromMap(mazeMap) {
-    mazeMap.objects.runes.forEach(({ x, z, type }) => {
+    mazeMap.objects.runes.forEach(({ x, z, type, isTrap }) => {
       const rl = Math.random() < 0.5 ? -1 : 1;
       const lr = Math.random() < 0.5 ? -1 : 1;
       const worldX = x * tileSize + tileSize / (rl * 2.5);
       const worldZ = z * tileSize + tileSize / (lr * 2.5);
       const position = new THREE.Vector3(worldX, 0.5, worldZ);
-      this.createRune(type, position);
+
+      this.createRune(type, position, isTrap);
     });
   }
 

@@ -5,8 +5,6 @@ export const RuneTypes = {
     icon: "🪽",
     color: "#8a2be2",
     description: "Float above obstacles. Great for crossing pits.",
-    isTrap: false,
-    fakeVariant: "rune_confusion",
   },
 
   rune_blink: {
@@ -14,8 +12,6 @@ export const RuneTypes = {
     icon: "⚡",
     color: "#00bcd4",
     description: "Teleport a short distance through walls or barriers.",
-    isTrap: false,
-    fakeVariant: "rune_void",
   },
 
   rune_strength: {
@@ -23,8 +19,6 @@ export const RuneTypes = {
     icon: "🔨",
     color: "#e57373",
     description: "Break weak or marked walls to reveal secret paths.",
-    isTrap: false,
-    fakeVariant: "rune_pathblock",
   },
 
   rune_speed: {
@@ -32,8 +26,6 @@ export const RuneTypes = {
     icon: "🏃‍♂️",
     color: "#fbc02d",
     description: "Sprint for 4 seconds. Use to escape traps or explore faster.",
-    isTrap: false,
-    fakeVariant: "rune_gravity",
   },
 
   rune_vision: {
@@ -41,8 +33,6 @@ export const RuneTypes = {
     icon: "🔍",
     color: "#4caf50",
     description: "Reveal hidden treasures and secret objects briefly.",
-    isTrap: false,
-    fakeVariant: "rune_silence",
   },
 
   // === Fake/Trap Runes ===

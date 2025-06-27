@@ -1,5 +1,3 @@
-// src/exit/ExitTriggerZone.js
-
 import * as THREE from 'three';
 
 export class ExitTriggerZone {
@@ -12,13 +10,18 @@ export class ExitTriggerZone {
   }
 
   update() {
-    if (this.activated || !this.exitDoor.isUnlocked()) return;
+    if (this.activated) return;
 
     const playerPos = this.player.controls.object.position.clone();
     const doorPos = this.exitDoor.getObject().position.clone();
 
     const distance = playerPos.distanceTo(doorPos);
     if (distance < 1) {
+      if (!this.exitDoor.isUnlocked()) {
+        this.gameManager?.hud?.showMessage("The door is locked! Activate the exit mechanism first.");
+        return;
+      }
+
       this.activated = true;
       this.gameManager.winGame();
     }
