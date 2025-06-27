@@ -38,7 +38,6 @@ function init() {
   walls = maze.walls;
   initWallColliders(walls, scene, true);
   breakableWalls = secretObjects.filter(obj => obj.userData.breakable);
-  console.log("🔍 breakableWalls:", breakableWalls.length);
 
   // Optional: replace with your actual UI manager if used
   const uiManager = null;
@@ -151,7 +150,6 @@ function animate() {
     }
   }
 
-  console.log("🔍 breakableWalls:", breakableWalls.length);
 
   // Apply or exit quicksand once per frame
   if (insideQuicksand) {
