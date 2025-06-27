@@ -18,7 +18,7 @@ export const maze1 = {
     exit: { x: 9, z: 9 },
     exitMechanism: { x: 3, z: 9 },
     runes: [
-      { x: 5, z: 1, type: "rune_flight" },
+      { x: 5, z: 3, type: "rune_flight" },
       { x: 5, z: 8, type: "rune_blink" },
       { x: 5, z: 2, type: "rune_strength" },
       { x: 4, z: 5, type: "rune_speed" },

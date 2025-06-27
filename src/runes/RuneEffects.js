@@ -1,99 +1,128 @@
 import * as THREE from 'three';
 
 export const RuneEffects = {
-  rune_flight: {
+rune_flight: {
   activate(player, scene, hud) {
-    const obj = player.controls.object;
-    const originalPos = obj.position.clone(); // Save original position
+    const camera = player.controls.object; // The FPS camera
+    const originalPos = camera.position.clone();
     const flightHeight = 3;
     const duration = 3000;
-    const descentSpeed = 0.05;
-    const safeDistance = 0.5; // Buffer distance from walls
+    const cameraHeight = 1.6; // Typical eye-level height in FPS games
+    const collisionRadius = 0.3; // Conservative estimate for player width
 
     // 1. Ascend immediately
-    obj.position.y += flightHeight;
+    camera.position.y += flightHeight;
     hud?.showMessage("You float above the ground...");
 
     // 2. Prepare safe descent
     const performSafeDescent = () => {
-      // Create collision tester
-      const collisionTester = new THREE.Box3();
-      const playerSize = new THREE.Vector3(player.radius, player.height, player.radius);
-      
-      const checkSafePosition = (position) => {
-        collisionTester.setFromCenterAndSize(position, playerSize);
-        
-        let isSafe = true;
-        scene.traverse(child => {
-          if ((child.userData?.isObstacle || child.userData?.isWall) && child.geometry) {
-            const childBox = new THREE.Box3().setFromObject(child);
-            if (collisionTester.intersectsBox(childBox)) {
-              isSafe = false;
-            }
+      // Get all collidable objects including low walls
+      const collidableObjects = [];
+      scene.traverse(child => {
+        if ((child.userData?.isObstacle || child.userData?.isWall || child.userData?.isLowWall) && child.geometry) {
+          if (!child.geometry.boundingBox) {
+            child.geometry.computeBoundingBox();
           }
-        });
+          collidableObjects.push(child);
+        }
+      });
+
+      // Check if position is safe (simple sphere collision)
+      const isPositionSafe = (position) => {
+        const cameraSphere = new THREE.Sphere(position, collisionRadius);
         
-        return isSafe;
+        for (const obstacle of collidableObjects) {
+          const obstacleBox = new THREE.Box3().setFromObject(obstacle);
+          if (cameraSphere.intersectsBox(obstacleBox)) {
+            return false;
+          }
+        }
+        return true;
       };
 
-      // Try direct descent first
-      if (checkSafePosition(originalPos)) {
-        obj.position.copy(originalPos);
-        hud?.showMessage("Flight fades.");
-        return;
-      }
+      // Find ground position with raycasting
+      const findGroundPosition = () => {
+        const groundRay = new THREE.Raycaster(
+          camera.position.clone(),
+          new THREE.Vector3(0, -1, 0),
+          flightHeight * 2
+        );
 
-      // If direct position is blocked, find nearest safe spot
+        const intersections = groundRay.intersectObjects(collidableObjects, true);
+        
+        if (intersections.length > 0) {
+          // For low walls, land slightly above them
+          if (intersections[0].object.userData?.isLowWall) {
+            return intersections[0].point.y + 0.1; // Small buffer
+          }
+          return intersections[0].point.y + cameraHeight;
+        }
+        return originalPos.y; // No ground found, return to original height
+      };
+
+      const targetY = findGroundPosition();
+      const targetPos = new THREE.Vector3(camera.position.x, targetY, camera.position.z);
+
+      // If direct position isn't safe, find nearest safe spot
       const findSafeLanding = () => {
+        if (isPositionSafe(targetPos)) {
+          return targetPos;
+        }
+
+        // Search in expanding circles
         const directions = [
-          new THREE.Vector3(1, 0, 0),   // Right
-          new THREE.Vector3(-1, 0, 0),  // Left
-          new THREE.Vector3(0, 0, 1),   // Forward
-          new THREE.Vector3(0, 0, -1),  // Backward
-          new THREE.Vector3(1, 0, 1).normalize(),   // Diagonal
-          new THREE.Vector3(-1, 0, 1).normalize(),  // Diagonal
-          new THREE.Vector3(1, 0, -1).normalize(),  // Diagonal
-          new THREE.Vector3(-1, 0, -1).normalize()  // Diagonal
+          new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+          new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1),
+          new THREE.Vector3(1, 0, 1).normalize(), new THREE.Vector3(-1, 0, 1).normalize(),
+          new THREE.Vector3(1, 0, -1).normalize(), new THREE.Vector3(-1, 0, -1).normalize()
         ];
 
-        // Check in increasing distances
-        for (let distance = 1; distance <= 5; distance += 1) {
+        for (let distance = 0.5; distance <= 2; distance += 0.5) {
           for (const dir of directions) {
-            const testPos = originalPos.clone()
-              .add(dir.clone().multiplyScalar(distance))
-              .setY(originalPos.y);
-            
-            if (checkSafePosition(testPos)) {
+            const testPos = new THREE.Vector3(
+              camera.position.x + dir.x * distance,
+              targetY,
+              camera.position.z + dir.z * distance
+            );
+            if (isPositionSafe(testPos)) {
               return testPos;
             }
           }
         }
-        
-        // Last resort - stay at current height
-        return originalPos.clone().setY(obj.position.y);
+
+        // Fallback - stay at current height
+        return new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z);
       };
 
       const safeLandingPos = findSafeLanding();
-      
-      // Animate to safe position
-      const animateDescent = () => {
-        if (obj.position.distanceTo(safeLandingPos) < 0.1) {
-          obj.position.copy(safeLandingPos);
-          hud?.showMessage("Landed safely.");
-          return;
-        }
-
-        obj.position.lerp(safeLandingPos, 0.1);
-        requestAnimationFrame(animateDescent);
-      };
-
-      animateDescent();
+      animateDescent(safeLandingPos);
     };
 
-    // 3. Start controlled descent after duration
-    setTimeout(() => {
-      performSafeDescent();
-    }, duration);
+    // Smooth descent animation
+    const animateDescent = (targetPos) => {
+      const startPos = camera.position.clone();
+      const startTime = Date.now();
+      const descentDuration = 1000; // ms
+
+      const animate = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / descentDuration, 1);
+        
+        // Linear interpolation
+        camera.position.lerpVectors(startPos, targetPos, progress);
+
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          hud?.showMessage("Flight fades.");
+        }
+      };
+
+      animate();
+    };
+
+    // 3. Start descent after duration
+    setTimeout(performSafeDescent, duration);
   }
 },
 
