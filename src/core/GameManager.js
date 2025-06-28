@@ -84,7 +84,7 @@ export class GameManager {
     document.exitPointerLock?.();                // Fallback
     document.body.style.cursor = 'auto';         // Show cursor
 
-    this.endScreen.showResult("🎉 You Escaped the Maze!");
+    this.endScreen.showResult("🍃 You Escaped the Maze!");
     }
 
     loseGame() {

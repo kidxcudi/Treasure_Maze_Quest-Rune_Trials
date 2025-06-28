@@ -36,7 +36,7 @@ export class HUD {
 
     const runeData = RuneTypes[runeName];
     if (runeData) {
-      this.runeDisplay.textContent = `${runeData.icon} ${runeData.label}`;
+      this.runeDisplay.textContent = `Rune held: ${runeData.label}`;
     } else {
       this.runeDisplay.textContent = runeName; // fallback
     }

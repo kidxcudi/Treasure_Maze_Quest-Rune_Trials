@@ -20,7 +20,7 @@ export const maze1 = {
     runes: [
       { x: 5, z: 3, type: "rune_flight" },
       { x: 5, z: 8, type: "rune_blink" },
-      { x: 5, z: 2, type: "rune_strength" },
+      { x: 9, z: 7, type: "rune_strength" },
       { x: 2, z: 5, type: "rune_speed" },
       { x: 6, z: 3, type: "rune_vision" },
 
@@ -28,18 +28,23 @@ export const maze1 = {
       { x: 7, z: 3, type: "rune_strength", isTrap: true }
     ],
     treasures: [
-      { x: 1, z: 1 },
+      { x: 9, z: 7 },
       { x: 3, z: 3 },
       { x: 9, z: 5 },
     ],
     easterEggs: [
       { x: 3, z: 2, type: "pass_through" },
-      { x: 8, z: 7, type: "breakable" },
-      { x: 4, z: 5, type: "low_wall" },
-      { x: 5, z: 2, type: "quicksand" }
+      { x: 10, z: 7, type: "breakable" },
+      { x: 8, z: 7, type: "low_wall" },
+      { x: 6, z: 9, type: "quicksand" }
     ],
   },
 };
+
+
+
+
+
 
 export const maze123 = {
   tileSize: 3,
@@ -95,6 +100,12 @@ export const maze123 = {
     ]
   }
 };
+
+
+
+
+
+
 
 export const maze12 = {
   tileSize: 3,

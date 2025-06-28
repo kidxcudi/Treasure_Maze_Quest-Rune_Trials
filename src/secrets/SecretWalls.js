@@ -137,11 +137,11 @@ function tryBreakWall(wall, canBreak, scene, hud, interactionManager, secretObje
     // 6. Nullify userData to prevent any residual interactions
     wall.userData = {};
     
-    hud?.showMessage("💥 Wall shattered!");
+    hud?.showMessage("Wall shattered!");
     console.groupEnd();
     return true;
   } else {
-    hud?.showMessage("🛑 You need the Strength rune to break this wall!");
+    hud?.showMessage("You need the Strength rune to break this wall!");
     return false;
   }
 }
