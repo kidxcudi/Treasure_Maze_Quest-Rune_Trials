@@ -1,0 +1,69 @@
+:root {
+  --earth-bg: #0e1510;
+  --moss-green: #6b8c42;
+  --light-moss: #a8d8c0;
+  --stone-edge: #5a4b2b;
+  --relief-light: #f8e8a8;
+  --highlight-glow: #a8d8c0;
+  --text-muted: #c0c8a0;
+}
+
+/* RESET & GLOBAL */
+body, html {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
+  background-color: var(--earth-bg);
+  color: var(--relief-light);
+}
+
+/* GAME AREA */
+#game-container {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+/* UI OVERLAY */
+#ui-overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  pointer-events: none;
+  color: var(--light-moss);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+#crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 22px;
+  color: var(--relief-light);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+#vision-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: black;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  z-index: 999;
+  pointer-events: none;
+}
+
+/* START SCREEN - NON-BOXED */
+/* === Start Screen: Jungle Ruins Style === */

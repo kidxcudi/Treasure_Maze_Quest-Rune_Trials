@@ -23,8 +23,10 @@ export class PlayerController {
 
     // Quicksand state
     this.isInQuicksand = false;
-    this.quicksandTimer = 0;
-    this.quicksandStartY = null; // Store starting Y when entering quicksand
+    this.quicksandStartY = null;      // Y pos when entering quicksand
+    this.quicksandTotalTime = 0;      // Accumulate time in quicksand
+    this.quicksandStunned = false;    // If player is currently stunned by quicksand
+    this.stunMessageShown = false;    // To avoid repeating message during stun
 
     document.addEventListener('click', () => {
       if (!gameState.gameOver) this.controls.lock();
@@ -53,7 +55,8 @@ export class PlayerController {
   }
 
   update(deltaTime) {
-    if (gameState.movementLocked || !this.controls.isLocked) return;
+    if (!this.controls.isLocked) return;
+    if (gameState.movementLocked) return;
 
     this.velocity.set(0, 0, 0);
     this.direction.set(0, 0, 0);
@@ -72,21 +75,31 @@ export class PlayerController {
     this.controls.moveRight(moveX);
     this.controls.moveForward(moveZ);
 
+    // Quicksand logic
     if (this.isInQuicksand) {
-      this.quicksandTimer += deltaTime;
+      this.quicksandTotalTime += deltaTime;
 
       const obj = this.controls.object;
-      const minSink = this.quicksandStartY - 0.5; // max sinking depth
+      const minSink = this.quicksandStartY - 0.5;
+
       if (obj.position.y > minSink) {
-        obj.position.y -= 0.005; // sink slowly
-        if (obj.position.y < minSink) obj.position.y = minSink; // clamp
+        obj.position.y -= 0.005;
+        if (obj.position.y < minSink) obj.position.y = minSink;
+      } else {
+        obj.position.y = minSink;
       }
 
-      // if (this.quicksandTimer > 5) {
-      //   console.log("⚠ Quicksand: You've been trapped too long!");
-      //   gameState.movementLocked = true; // optional trap lock
-      //   this.exitQuicksand();
-      // }
+      if (!this.quicksandStunned && this.quicksandTotalTime >= 7) {
+        this.quicksandStunned = true;
+        this.stunMovement(4, () => {
+          this.quicksandTotalTime = 0;
+          this.quicksandStunned = false;
+        });
+      }
+    } else {
+      // Reset sinking timer when out of quicksand
+      this.quicksandTotalTime = 0;
+      this.stunMessageShown = false;
     }
   }
 
@@ -101,9 +114,8 @@ export class PlayerController {
   applyQuicksandEffect() {
     if (!this.isInQuicksand) {
       this.isInQuicksand = true;
-      this.quicksandTimer = 0;
       this.quicksandStartY = this.controls.object.position.y;
-      this.setMovementSpeed(0.1);  // slow down
+      this.setMovementSpeed(0.1);
     }
   }
 
@@ -140,21 +152,24 @@ export class PlayerController {
     window.addEventListener('keydown', stepHandler);
   }
 
-  stunMovement(stepDuration = 5) {
+  stunMovement(durationSeconds = 5, onComplete = null) {
     gameState.movementLocked = true;
-    gameState.stunSteps = 0;
-    gameState.maxStunSteps = stepDuration;
+    this.setMovementSpeed(0); // fully stop movement during stun
 
-    const stepHandler = () => {
-      gameState.stunSteps++;
-      if (gameState.stunSteps >= gameState.maxStunSteps) {
-        gameState.movementLocked = false;
-        window.removeEventListener('keydown', stepHandler);
+    setTimeout(() => {
+      gameState.movementLocked = false;
+      
+      // If still in quicksand, slow speed, else normal
+      if (this.isInQuicksand) {
+        this.setMovementSpeed(0.1);
+      } else {
+        this.resetMovementSpeed();
       }
-    };
 
-    window.addEventListener('keydown', stepHandler);
+      if (typeof onComplete === 'function') onComplete();
+    }, durationSeconds * 1000);
   }
+
 
   applyEffectDuration(effectName, steps, onExpire) {
     let stepCount = 0;

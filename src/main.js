@@ -14,16 +14,16 @@ import { ExitTriggerZone } from './exit/ExitTriggerZone.js';
 import { DoorManager } from './exit/DoorManager.js';
 import { InputHandler } from './core/InputHandler.js';
 import { TreasureManager } from './maze/TreasureManager.js';
-import { maze1 } from './maze/mazeLayout.js'; // For tileSize and maze data
-import { handleSecretCollision, checkBreakableWallProximity} from './secrets/SecretWalls.js';
+import { maze1 } from './maze/MazeLayout.js';
+import { handleSecretCollision, checkBreakableWallProximity } from './secrets/SecretWalls.js';
+import { StartScreen } from './ui/StartScreen.js';
 
 let scene, camera, renderer, clock;
-let player;
+let player, hud, runeManager, interactionManager;
 let walls = [];
 let secretObjects = [];
 let breakableWalls = [];
-let hud; 
-let runeManager, interactionManager;
+let exitTrigger;
 
 function init() {
   const container = document.getElementById('game-container');
@@ -33,16 +33,25 @@ function init() {
   renderer = setup.renderer;
   clock = new THREE.Clock();
 
-  // Maze & walls
+  const startScreen = new StartScreen();
+  startScreen.show(() => {
+    document.body.requestPointerLock?.();
+    startGame(container);
+  });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+
+function startGame(container) {
   const maze = buildMaze(scene, secretObjects);
   walls = maze.walls;
   initWallColliders(walls, scene, true);
   breakableWalls = secretObjects.filter(obj => obj.userData.breakable);
 
-  // Optional: replace with your actual UI manager if used
-  const uiManager = null;
-
-  // Player - positioned at maze start
   player = new PlayerController(camera, scene);
   const start = maze1.objects.playerStart;
   player.controls.object.position.set(
@@ -51,63 +60,42 @@ function init() {
     start.z * maze1.tileSize
   );
 
-  // HUD
   hud = new HUD();
   hud.updateRuneDisplay(null);
 
-  // Runes
   runeManager = new RuneManager(scene);
   runeManager.spawnFromMap(maze1);
 
-  // Treasures
   const treasureManager = new TreasureManager(scene, hud);
   treasureManager.spawnFromMap(maze1);
   gameState.totalTreasures = treasureManager.getTreasures().length;
 
-  // Exit Door - spawn using helper (returns ExitDoor instance)
   const exitDoor = spawnExitDoor(scene);
-
-  // Game Manager
   const gameManager = new GameManager(hud, scene, player, exitDoor, null);
   const doorManager = new DoorManager(exitDoor, gameManager);
   gameManager.doorManager = doorManager;
 
-  // Exit Mechanism - use helper to spawn correctly
   const exitMechanism = spawnExitMechanism(scene, gameManager);
+  exitTrigger = new ExitTriggerZone(player, exitDoor, gameManager);
 
-  // Exit Trigger Zone
-  const exitTrigger = new ExitTriggerZone(player, exitDoor, gameManager);
-
-  // TrapManager placeholder (null unless added later)
   const trapManager = null;
 
-  // Interactions
   interactionManager = new InteractionManager(
     camera,
     scene,
     runeManager,
     doorManager,
     trapManager,
-    [],            // interactables
+    [],
     hud,
     player,
     gameManager,
     maze,
-    uiManager,
+    null,
     treasureManager
   );
 
-  // Input Handler
   const inputHandler = new InputHandler(interactionManager, player);
-
-  // Resize handling
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
-
-  window.exitTrigger = exitTrigger;
 
   animate();
 }
@@ -120,8 +108,10 @@ function animate() {
   player.update(delta);
 
   if (checkCollision(player.controls.object.position)) {
-    player.controls.object.position.copy(prevPos); // revert if hit
+    player.controls.object.position.copy(prevPos);
   }
+
+  runeManager.update(performance.now());
 
   checkBreakableWallProximity(
     player.controls.object.position,
@@ -129,11 +119,9 @@ function animate() {
     breakableWalls,
     scene,
     hud,
-    interactionManager  // <-- Pass it here!
+    interactionManager
   );
 
-
-  // Track quicksand presence this frame
   let insideQuicksand = false;
 
   for (let obj of secretObjects) {
@@ -143,26 +131,27 @@ function animate() {
     if (box.containsPoint(playerPos)) {
       if (obj.userData.isQuicksand) {
         insideQuicksand = true;
-        hud.showMessage("⚠ You're stuck in quicksand!");
       } else {
         handleSecretCollision(obj, player, scene, hud);
       }
     }
   }
 
-
-  // Apply or exit quicksand once per frame
   if (insideQuicksand) {
     player.applyQuicksandEffect();
   } else {
     player.exitQuicksand();
   }
 
-  interactionManager?.update(delta);
-  window.exitTrigger?.update();
+  if (player.isInQuicksand && !player.quicksandStunned) {
+    hud.showMessage("⚠ You're stuck in quicksand!");
+  } else if (player.quicksandStunned) {
+    hud.showMessage("⚠ You're stunned from quicksand!");
+  }
 
+  interactionManager?.update(delta);
+  exitTrigger?.update();
   renderer.render(scene, camera);
 }
-
 
 window.onload = init;

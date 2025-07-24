@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { maze1 } from '../maze/mazeLayout.js'; // <-- Adjust path if needed
+import { maze1 } from '../maze/MazeLayout.js'; // <-- Adjust path if needed
 import { wallColliders } from '../core/Collision.js';
 
 const tileSize = maze1.tileSize;

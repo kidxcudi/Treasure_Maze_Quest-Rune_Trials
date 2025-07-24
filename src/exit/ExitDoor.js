@@ -1,6 +1,6 @@
 // src/exit/ExitDoor.js
 import * as THREE from 'three';
-import { maze1 } from '../maze/mazeLayout.js';
+import { maze1 } from '../maze/MazeLayout.js';
 
 const tileSize = maze1.tileSize;
 

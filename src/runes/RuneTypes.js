@@ -1,83 +1,78 @@
 export const RuneTypes = {
-  // === Real Runes (can have trap variants) ===
+  // === Positive Runes ===
   rune_flight: {
-    label: "Rune of Flight",
-    icon: "🪽",
-    color: "#8a2be2",
-    description: "Float above obstacles. Great for crossing pits and barriers.",
+    label: "Valkyrie's Wings",
+    icon: "ᛉ",
+    color: "#9b59b6", // Lighter mystical purple
+    description: "Fly over gaps and obstacles for some time.",
   },
 
   rune_blink: {
-    label: "Rune of Blink",
-    icon: "⚡",
-    color: "#00bcd4",
-    description: "Teleport a short distance to visible places.",
+    label: "Bifrost Step",
+    icon: "ᚱ",
+    color: "#00bfff", // Brighter Bifrost blue
+    description: "Teleport instantly to any visible location.",
   },
 
   rune_strength: {
-    label: "Rune of Strength",
-    icon: "🔨",
-    color: "#e57373",
-    description: "Break weak or marked walls to reveal secret paths.",
+    label: "Thor's Might",
+    icon: "ᚢ",
+    color: "#e53935", // Mjolnir red
+    description: "Destroy weak walls and breakable objects with one hit.",
   },
 
   rune_speed: {
-    label: "Rune of Speed",
-    icon: "🏃‍♂️",
-    color: "#fbc02d",
-    description: "Sprint for 4 seconds. Use to explore faster.",
+    label: "Sleipnir's Gallop",
+    icon: "ᛋ",
+    color: "#ffd700", // Mythic gold
+    description: "Move at incredible speed for some time.",
   },
 
   rune_vision: {
-    label: "Rune of Vision",
-    icon: "🔍",
-    color: "#4caf50",
-    description: "Reveal hidden treasures and secret objects briefly.",
+    label: "Heimdall's Sight",
+    icon: "ᚨ",
+    color: "#2ecc71", // Emerald green (better for "all-seeing" vision)
+    description: "Reveal hidden traps and secrets temporarily.",
   },
 
-  // === Fake/Trap Runes ===
+  // === Trap Runes ===
   rune_confusion: {
-    label: "Confusion Rune",
-    icon: "🔄",
-    color: "#ff7043",
-    description: "Inverts movement for next some steps.",
-    clue: "Flickers unnaturally.",
+    label: "Loki's Mirage",
+    icon: "ᛈ",
+    color: "#ff7043", // Warning orange
+    description: "TRAP: Inverts your movement controls for some time.",
     isTrap: true,
   },
 
   rune_pathblock: {
-    label: "Rune of Binding",
-    icon: "⛔",
-    color: "#8d6e63",
-    description: "Blocks the nearest path for some player steps.",
-    clue: "The ground trembles faintly nearby.",
+    label: "Skadi's Barricade",
+    icon: "ᛁ",
+    color: "#b3e5fc", // Frost blue
+    description: "TRAP: Blocks vision of your path (movement unaffected).",
     isTrap: true,
   },
 
   rune_silence: {
-    label: "Silence Rune",
-    icon: "🔇",
-    color: "#90a4ae",
-    description: "Disables UI and audio for some steps.",
-    clue: "It glitches slightly.",
+    label: "Hel's Shroud",
+    icon: "ᚺ",
+    color: "#607d8b", // Deep silence gray
+    description: "TRAP: Disables all sound and UI temporarily.",
     isTrap: true,
   },
 
   rune_gravity: {
-    label: "Rune of Gravity",
-    icon: "⬇️",
-    color: "#5d4037",
-    description: "Slams you down and stuns movement for some steps.",
-    clue: "It pulses with a heavy weight.",
+    label: "Jormungandr's Grasp",
+    icon: "ᚦ",
+    color: "#6a1b9a", // Serpent purple
+    description: "TRAP: Completely stops your movement for some time.",
     isTrap: true,
   },
 
   rune_void: {
-    label: "Rune of Void",
-    icon: "🕳️",
-    color: "#311b92",
-    description: "Blinds you (hide maze) for some steps.",
-    clue: "A shadowy whirlpool spins inside the rune.",
+    label: "Fenrir's Shadow",
+    icon: "ᚾ",
+    color: "#000000", // Absolute void black
+    description: "TRAP: Hides all walls from view temporarily.",
     isTrap: true,
-  },
+  }
 };

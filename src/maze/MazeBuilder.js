@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { maze1 } from './mazeLayout.js';
+import { maze1 } from './MazeLayout.js';
 import { spawnEasterEgg } from '../secrets/SecretWalls.js';
 
 export const tileSize = maze1.tileSize;
