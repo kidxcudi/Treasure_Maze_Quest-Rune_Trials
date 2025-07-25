@@ -45,7 +45,7 @@ export const RuneTypes = {
   },
 
   rune_pathblock: {
-    label: "Skadi's Barricade",
+    label: "Loki's Mirage",
     icon: "ᛁ",
     color: "#b3e5fc", // Frost blue
     description: "TRAP: Blocks vision of your path (movement unaffected).",
@@ -72,7 +72,7 @@ export const RuneTypes = {
     label: "Fenrir's Shadow",
     icon: "ᚾ",
     color: "#000000", // Absolute void black
-    description: "TRAP: Hides all walls from view temporarily.",
+    description: "TRAP: Hides all visuals temporarily.",
     isTrap: true,
   }
 };
