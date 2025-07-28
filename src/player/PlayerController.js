@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import { gameState } from '../core/gameState.js';
+import { animationSystem } from '../core/AnimationSystem.js';
 
 export class PlayerController {
   constructor(camera, scene) {
@@ -23,17 +24,21 @@ export class PlayerController {
 
     // Quicksand state
     this.isInQuicksand = false;
-    this.quicksandStartY = null;      // Y pos when entering quicksand
-    this.quicksandTotalTime = 0;      // Accumulate time in quicksand
-    this.quicksandStunned = false;    // If player is currently stunned by quicksand
-    this.stunMessageShown = false;    // To avoid repeating message during stun
+    this.quicksandStartY = null;
+    this.quicksandTotalTime = 0;
+    this.quicksandStunned = false;
+    this.stunMessageShown = false;
 
-    document.addEventListener('click', () => {
-      if (!gameState.gameOver) this.controls.lock();
-    });
+    this.idleBounceAnimId = null;
 
-    document.addEventListener('keydown', (e) => this.onKeyDown(e));
-    document.addEventListener('keyup', (e) => this.onKeyUp(e));
+    // Bind handlers for proper removal
+    this._clickHandler = () => { if (!gameState.gameOver) this.controls.lock(); };
+    this._keyDownHandler = (e) => this.onKeyDown(e);
+    this._keyUpHandler = (e) => this.onKeyUp(e);
+
+    document.addEventListener('click', this._clickHandler);
+    document.addEventListener('keydown', this._keyDownHandler);
+    document.addEventListener('keyup', this._keyUpHandler);
   }
 
   onKeyDown(event) {
@@ -55,8 +60,14 @@ export class PlayerController {
   }
 
   update(deltaTime) {
-    if (!this.controls.isLocked) return;
-    if (gameState.movementLocked) return;
+    if (!this.controls.isLocked) {
+      this._stopIdleBounce();
+      return;
+    }
+    if (gameState.movementLocked) {
+      this._stopIdleBounce();
+      return;
+    }
 
     this.velocity.set(0, 0, 0);
     this.direction.set(0, 0, 0);
@@ -69,13 +80,18 @@ export class PlayerController {
 
     this.direction.normalize();
 
+    if (this.direction.length() === 0) {
+      this._startIdleBounce();
+    } else {
+      this._stopIdleBounce();
+    }
+
     const moveX = this.direction.x * this.speed * deltaTime;
     const moveZ = this.direction.z * this.speed * deltaTime;
 
     this.controls.moveRight(moveX);
     this.controls.moveForward(moveZ);
 
-    // Quicksand logic
     if (this.isInQuicksand) {
       this.quicksandTotalTime += deltaTime;
 
@@ -97,7 +113,6 @@ export class PlayerController {
         });
       }
     } else {
-      // Reset sinking timer when out of quicksand
       this.quicksandTotalTime = 0;
       this.stunMessageShown = false;
     }
@@ -122,14 +137,23 @@ export class PlayerController {
   exitQuicksand() {
     if (this.isInQuicksand) {
       this.isInQuicksand = false;
-      this.quicksandTimer = 0;
+      this.quicksandTotalTime = 0;
       this.resetMovementSpeed();
 
       const obj = this.controls.object;
-      obj.position.y = this.quicksandStartY; // reset height exactly
-      this.quicksandStartY = null;
+      const targetY = this.quicksandStartY;
 
-      // Unlock movement if locked
+      animationSystem.createTween({
+        from: obj.position.y,
+        to: targetY,
+        duration: 0.5,
+        easing: t => t * t * (3 - 2 * t),
+        onUpdate: (value) => { obj.position.y = value; },
+        onComplete: () => {
+          this.quicksandStartY = null;
+        }
+      });
+
       if (gameState.movementLocked) {
         gameState.movementLocked = false;
       }
@@ -154,22 +178,25 @@ export class PlayerController {
 
   stunMovement(durationSeconds = 5, onComplete = null) {
     gameState.movementLocked = true;
-    this.setMovementSpeed(0); // fully stop movement during stun
+    this.setMovementSpeed(0);
 
-    setTimeout(() => {
-      gameState.movementLocked = false;
-      
-      // If still in quicksand, slow speed, else normal
-      if (this.isInQuicksand) {
-        this.setMovementSpeed(0.1);
-      } else {
-        this.resetMovementSpeed();
+    let elapsed = 0;
+    const animId = animationSystem.addAnimation((delta) => {
+      elapsed += delta;
+      if (elapsed >= durationSeconds) {
+        animationSystem.removeAnimation(animId);
+        gameState.movementLocked = false;
+
+        if (this.isInQuicksand) {
+          this.setMovementSpeed(0.1);
+        } else {
+          this.resetMovementSpeed();
+        }
+
+        if (typeof onComplete === 'function') onComplete();
       }
-
-      if (typeof onComplete === 'function') onComplete();
-    }, durationSeconds * 1000);
+    });
   }
-
 
   applyEffectDuration(effectName, steps, onExpire) {
     let stepCount = 0;
@@ -181,5 +208,42 @@ export class PlayerController {
       }
     };
     window.addEventListener('keydown', stepListener);
+  }
+
+  _startIdleBounce() {
+    if (this.idleBounceAnimId == null) {
+      this.idleBounceAnimId = animationSystem.createIdleBounce(this.controls.object, {
+        amplitude: 0.03,
+        speed: 1.5,
+      });
+    }
+  }
+
+  _stopIdleBounce() {
+    if (this.idleBounceAnimId != null) {
+      animationSystem.removeAnimation(this.idleBounceAnimId);
+      this.idleBounceAnimId = null;
+      if (this.quicksandStartY != null) {
+        this.controls.object.position.y = this.quicksandStartY;
+      }
+    }
+  }
+
+  /** Cleanup on dispose */
+  dispose() {
+    // Remove event listeners
+    document.removeEventListener('click', this._clickHandler);
+    document.removeEventListener('keydown', this._keyDownHandler);
+    document.removeEventListener('keyup', this._keyUpHandler);
+
+    // Remove animations
+    if (this.idleBounceAnimId != null) {
+      animationSystem.removeAnimation(this.idleBounceAnimId);
+      this.idleBounceAnimId = null;
+    }
+
+    // Remove controls from scene
+    this.scene.remove(this.controls.object);
+    this.controls.dispose?.();
   }
 }
