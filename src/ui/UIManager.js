@@ -1,42 +1,73 @@
-import { HUD } from './HUD.js';
-import { Tooltip } from './Tooltip.js';
-import { StartScreen } from './StartScreen.js';
-import { EndScreen } from './EndScreen.js';
+import { HUD } from './hud/HUD.js';
+import { Tooltip } from './hud/Tooltip.js';
+import { StartScreen } from './screens/StartScreen.js';
+import { EndScreen } from './screens/EndScreen.js';
 
 class UIManager {
   constructor() {
-    this.hud = new HUD();
-    this.tooltip = new Tooltip();
-    this.startScreen = new StartScreen();
-    this.endScreen = new EndScreen();
+    this._components = {
+      hud: new HUD(),
+      tooltip: new Tooltip(),
+      startScreen: new StartScreen(),
+      endScreen: new EndScreen()
+    };
+    this._currentState = 'start';
   }
 
-  showTooltip(text) {
-    this.tooltip.show(text);
+  // Public API
+  showStart(onStartCallback) {
+    this._components.startScreen.show(onStartCallback);
+    this._currentState = 'start';
+  }
+
+  startGame() {
+    this._components.hud.show();
+    this._components.startScreen.hide();
+    this._currentState = 'game';
+  }
+
+  endGame(results) {
+    this._components.hud.hide();
+    this._components.endScreen.showResults(
+      results.message,
+      results.playtime,
+      results.score
+    );
+    this._currentState = 'end';
+  }
+
+  showTooltip(text, options = {}) {
+    if (options.worldPosition) {
+      this._components.tooltip.showWorld(text, options.worldPosition, options.duration);
+    } else {
+      this._components.tooltip.showTop(text, options.duration);
+    }
   }
 
   hideTooltip() {
-    this.tooltip.hide();
+    this._components.tooltip.hideWorld(); 
   }
 
   updateHUD(data) {
-    this.hud.update(data);
+    this._components.hud.update(data);
   }
 
-  showStart() {
-    this.startScreen.show();
+  showMessage(text, duration = 3000) {
+    this._components.hud.showMessage(text, duration);
   }
 
-  hideStart() {
-    this.startScreen.hide();
+  // State management
+  get currentState() {
+    return this._currentState;
   }
 
-  showEnd(score, time) {
-    this.endScreen.show(score, time);
-  }
-
-  hideEnd() {
-    this.endScreen.hide();
+  // Cleanup
+  dispose() {
+    Object.values(this._components).forEach(component => {
+      if (typeof component.dispose === 'function') {
+        component.dispose();
+      }
+    });
   }
 }
 

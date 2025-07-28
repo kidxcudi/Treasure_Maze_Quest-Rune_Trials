@@ -1,247 +1,246 @@
-import * as THREE from 'three';
+// src/core/interaction/InteractionManager.js
+import { GameRaycaster } from './physics/Raycaster.js';
 import { gameState } from './gameState.js';
-import { RuneEffects } from '../runes/RuneEffects.js';
-import { RuneTypes } from '../runes/RuneTypes.js';
-import { Tooltip } from '../ui/Tooltip.js';
+import { RuneEffects } from '../entities/runes/effects/RuneEffects.js';
+import { RuneTypes } from '../entities/runes/RuneTypes.js';
+import { Tooltip } from '../ui/hud/Tooltip.js';
+import { EventBus } from './utils/EventBus.js';
 
 export class InteractionManager {
-  constructor(
+  constructor({
     camera,
     scene,
     runeManager,
     doorManager,
     trapManager,
-    interactables = [],
-    hud = null,
-    player = null,
-    gameManager = null,
-    maze = null,
-    uiManager = null,
-    treasureManager = null
-  ) {
-    this.camera = camera;
-    this.scene = scene;
-    this.runeManager = runeManager;
-    this.doorManager = doorManager;
-    this.trapManager = trapManager;
-    this.interactables = interactables;
-    this.hud = hud;
-    this.player = player;
-    this.gameManager = gameManager;
-    this.maze = maze;
-    this.uiManager = uiManager;
-    this.treasureManager = treasureManager;
+    treasureManager,
+    gameManager,
+    uiManager,
+    maze,
+    player
+  }) {
+    this.dependencies = {
+      camera,
+      scene,
+      runeManager,
+      doorManager,
+      trapManager,
+      treasureManager,
+      gameManager,
+      uiManager,
+      maze,
+      player
+    };
 
-    this.raycaster = new THREE.Raycaster();
-    this.mouse = new THREE.Vector2(0, 0);
+    this.raycaster = new GameRaycaster(camera, { range: 3, debug: true });
+    this.tooltip = new Tooltip();
+    this.interactables = [];
+    this.hoveredObject = null;
 
-    document.addEventListener('click', (e) => {
-      if (gameState.gameOver) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
+    this.setupEventListeners();
+    
+    EventBus.on('input:use-rune', () => {
+      if (!gameState.gameOver) {
+        this.useRune();
       }
-      this.handleClick();
     });
   }
 
-  tooltip = new Tooltip();
+  setupEventListeners() {
+    document.addEventListener('click', (e) => {
+      if (gameState.gameOver) return;
+      this.raycaster.updateFromEvent(e);
+      this.handleInteraction();
+    });
 
-  removeInteractable(object) {
-  if (!object || !this.interactables) {
-    console.warn("🔥 Invalid object or interactables array");
-    return false;
+    // Optional hover detection
+    document.addEventListener('mousemove', (e) => {
+      this.raycaster.updateFromEvent(e);
+      this.updateHoverState();
+    });
   }
 
-  // Debug: Log before removal
-  console.groupCollapsed(`🔥 Removing interactable: ${object.name || object.uuid}`);
-  console.log("Current interactables:", this.interactables.length);
-  console.log("Object details:", object);
 
-  // 1. Remove from interactables array
-  const index = this.interactables.findIndex(
-    item => item === object || item.uuid === object.uuid
-  );
-  
-  if (index !== -1) {
-    this.interactables.splice(index, 1);
-    console.log("✅ Removed from interactables array");
-  } else {
-    console.warn("❌ Object not found in interactables");
-  }
+  handleInteraction() {
+    const targets = {
+      runes: this.dependencies.runeManager.getRunes(),
+      doors: this.dependencies.doorManager?.getDoors() || [],
+      // Add other target types...
+    };
 
-  // 2. Remove from scene if it exists there
-  if (object.parent === this.scene) {
-    this.scene.remove(object);
-    console.log("✅ Removed from scene");
-  } else if (object.parent) {
-    console.warn(`⚠️ Object parent is ${object.parent.type}, not scene`);
-  }
+    const intersections = this.raycaster.getIntersections(targets);
+    if (!intersections.length) return;
 
-  // 3. Clean up any residual references
-  if (object.userData) {
-    object.userData.isInteractable = false;
-    object.userData.isObstacle = false;
-  }
+    // Process interactions in priority order
+    const interactionHandled = 
+      this.processRunePickup(intersections) ||
+      this.processExitMechanism(intersections) ||
+      this.processDoorInteraction(intersections);
+      // this.processTrapTrigger(intersections) ||
+      // this.processTreasurePickup(intersections) ||
+      // this.processRuneTargets(intersections);
 
-  console.groupEnd();
-  return true;
-}
-
-  handleClick() {
-    if (!this.camera || !this.scene) return;
-
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    this.raycaster.far = 3;
-
-    // Rune pickup
-    const runeHits = this.raycaster.intersectObjects(this.runeManager.getRunes(), true);
-    if (runeHits.length > 0) {
-      this.pickupRune(runeHits[0].object).catch(console.error);
-      return;
-    }
-
-    // Exit mechanism
-    const mech = this.scene.getObjectByName("exit_mechanism");
-    if (mech && !this.gameManager?.isExitActivated?.()) {
-      const mechHit = this.raycaster.intersectObject(mech, true);
-      if (mechHit.length > 0) {
-        if (gameState.treasuresCollected >= gameState.totalTreasures) {
-          console.log("✅ All treasures collected. Exit activated.");
-          this.scene.remove(mech);
-          this.hud?.showMessage("Exit activated! Hurry!");
-          this.gameManager?.triggerExitTimer?.();
-        } else {
-          const missing = gameState.totalTreasures - gameState.treasuresCollected;
-          this.hud?.showMessage(`You still need ${missing} treasure${missing > 1 ? 's' : ''}...`);
-        }
-        return;
-      }
-    }
-
-    // Exit door
-    if (this.doorManager) {
-      const doorHits = this.raycaster.intersectObjects(this.doorManager.getDoors(), true);
-      if (doorHits.length > 0) {
-        this.doorManager.tryOpenDoor(doorHits[0].object);
-        return;
-      }
-    }
-
-    // Trap trigger
-    if (this.trapManager) {
-      const trapHits = this.raycaster.intersectObjects(this.trapManager.getTraps(), true);
-      if (trapHits.length > 0) {
-        this.trapManager.triggerTrap(trapHits[0].object);
-        return;
-      }
-    }
-
-    // Treasure pickup
-    if (this.treasureManager) {
-      const treasureHits = this.raycaster.intersectObjects(this.treasureManager.getTreasures(), true);
-      if (treasureHits.length > 0) {
-        this.treasureManager.collect(treasureHits[0].object);
-        return;
-      }
-    }
-
-    // Interactable rune-use targets
-    for (let obj of this.interactables) {
-      const hits = this.raycaster.intersectObject(obj, true);
-      if (hits.length > 0 && gameState.equippedRune) {
-        if (obj.userData.requiredRune === gameState.equippedRune) {
-          this.useRune();
-          this.removeInteractable(obj); // <-- use the removal helper here
-        } else {
-          console.log("Wrong rune!");
-        }
-        return;
-      }
+    if (!interactionHandled) {
+      console.log('No valid interaction');
     }
   }
 
-  async pickupRune(hitObject) {
-    if (gameState.equippedRune) {
-      this.hud?.showMessage("You already have a rune equipped!");
-      return;
-    }
+  processRunePickup(intersections) {
+    const runeHit = intersections.find(h => h.object?.userData?.isRune);
+    if (!runeHit) return false;
 
-    const rune = this.runeManager.getRunes().find(r =>
-      r === hitObject || r === hitObject.parent || (r.children && r.children.includes(hitObject))
-    );
-
-    if (!rune) {
-      console.warn("No valid rune found for pickup");
-      return;
-    }
-
-    const runeName = rune.name;
-    const runeData = RuneTypes[runeName];
-
-    if (!runeData) {
-      console.warn("Unknown rune data:", runeName);
-      return;
-    }
-
-    this.runeManager.removeRune(rune);
-    this.hud?.updateRuneDisplay(runeName);
-    this.hud?.showMessage(`Picked up ${runeData.label}`);
-    this.tooltip.show(runeData.description);
-
-    if (runeData.isTrap) {
-      const { FakeRuneEffects } = await import('../runes/FakeRuneEffects.js');
-      try {
-        const context = this.getEffectContext(runeName);
-
-        if (runeName === 'rune_pathblock' && !context) {
-          console.warn("[InteractionManager] Maze context missing for rune_pathblock! Effect will not trigger properly.");
-        }
-
-        FakeRuneEffects[runeName]?.onEquip?.(this.player, gameState, this.hud, context);
-      } catch (err) {
-        console.warn("Error applying trap effect:", err);
-      }
-      return;
-    }
-
-    gameState.equippedRune = runeName;
-  }
-
-  useRune() {
-    if (!gameState.equippedRune) {
-      this.hud?.showMessage("No rune equipped!");
-      return false;
-    }
-
-    const runeName = gameState.equippedRune;
-    RuneEffects[runeName]?.activate?.(this.player, this.scene, this.hud, null);
-
-    gameState.equippedRune = null;
-    this.hud?.updateRuneDisplay(null);
-    this.hud?.showMessage(`${runeName.replace("rune_", "")} rune used`);
-
+    this.pickupRune(runeHit.object);
     return true;
   }
 
-  getEquippedRune() {
-    return gameState.equippedRune;
+
+
+  processExitMechanism(intersections) {
+    const mech = this.dependencies.scene.getObjectByName("exit_mechanism");
+    if (!mech || this.dependencies.gameManager?.isExitActivated?.()) return false;
+
+    const mechHit = intersections.find(h => h.object === mech);
+    if (!mechHit) return false;
+
+    if (gameState.treasuresCollected >= gameState.totalTreasures) {
+      this.dependencies.scene.remove(mech);
+      this.dependencies.uiManager.showMessage("Exit activated! Hurry!");
+      this.dependencies.gameManager.triggerExitTimer();
+    } else {
+      const missing = gameState.totalTreasures - gameState.treasuresCollected;
+      this.dependencies.uiManager.showMessage(`Need ${missing} more treasure${missing > 1 ? 's' : ''}`);
+    }
+    return true;
+  }
+
+  processDoorInteraction(intersections) {
+    const doorHit = intersections.find(h => h.objectType === 'door');
+    if (!doorHit || !doorHit.object?.userData?.isDoor) return false;
+
+    // Example door interaction logic:
+    this.dependencies.doorManager.toggleDoor(doorHit.object);
+    return true;
+  }
+
+
+  async pickupRune(runeObject) {
+    if (gameState.equippedRune) {
+      this.dependencies.uiManager.showMessage("Already equipped a rune!");
+      return;
+    }
+
+    const rune = this.dependencies.runeManager.getRuneFromObject(runeObject);
+    if (!rune) {
+      console.warn("Invalid rune object");
+      return;
+    }
+
+    const runeData = RuneTypes[rune.name];
+    if (!runeData) {
+      console.warn(`Unknown rune type: ${rune.name}`);
+      return;
+    }
+
+    this.dependencies.runeManager.removeRune(rune);
+    this.dependencies.uiManager.updateHUD({ rune: rune.name });
+    this.dependencies.uiManager.showMessage(`Picked up ${runeData.label}`);
+    this.dependencies.uiManager.showTooltip(runeData.description);
+
+    if (runeData.isTrap) {
+      await this.activateTrapRune(rune.name);
+    } else {
+      gameState.equippedRune = rune.name;
+    }
+  }
+
+  async activateTrapRune(runeName) {
+    try {
+      const { FakeRuneEffects } = await import('../entities/runes/effects/FakeRuneEffects.js');
+      const context = this.getEffectContext(runeName);
+      FakeRuneEffects[runeName]?.onEquip?.(
+        this.dependencies.player, 
+        gameState, 
+        this.dependencies.uiManager, 
+        context
+      );
+    } catch (error) {
+      console.error("Failed to activate trap rune:", error);
+    }
+  }
+
+  useRune() {
+  if (!gameState.equippedRune) {
+    this.dependencies.uiManager.showMessage("No rune equipped!");
+    return false;
+  }
+
+  const runeName = gameState.equippedRune;
+  const runeKey = runeName.startsWith("rune_") ? runeName : `rune_${runeName}`;
+  const runeData = RuneTypes[runeKey];
+  const effectFn = RuneEffects[runeKey];
+
+  if (typeof effectFn === 'function') {
+    effectFn(
+      this.dependencies.player,
+      this.dependencies.scene,
+      this.dependencies.uiManager
+    );
+    gameState.equippedRune = null;
+    this.dependencies.uiManager.updateHUD(null);
+    this.dependencies.uiManager.showMessage(`${runeData.label} rune used`);
+    return true;
+  } else {
+    console.warn(`No effect function for rune: ${runeKey}`);
+    return false;
+  }
+}
+
+
+  removeInteractable(object) {
+    if (!object || !this.interactables) {
+      console.warn("Invalid object or interactables array");
+      return false;
+    }
+
+    const index = this.interactables.findIndex(
+      item => item === object || item.uuid === object.uuid
+    );
+
+    if (index !== -1) {
+      this.interactables.splice(index, 1);
+
+      if (typeof object.dispose === 'function') {
+        object.dispose(); // ✅ CLEAN UP
+      }
+
+      if (object.parent === this.dependencies.scene) {
+        this.dependencies.scene.remove(object);
+      }
+
+      return true;
+    }
+
+    return false;
+  }
+
+
+  updateHoverState() {
+    // Implement hover highlighting logic here
   }
 
   update() {
-    // Future enhancements: hover highlights, tooltips, etc.
+    // Frame update logic
+    if (this.hoveredObject) {
+      // Handle hover effects
+    }
   }
 
   getEffectContext(runeName) {
-    switch (runeName) {
-      case 'rune_pathblock':
-        return this.maze;
-      case 'rune_silence':
-        return this.uiManager;
-      case 'rune_void':
-        return this.scene;
-      default:
-        return this.scene;
-    }
+    const contextMap = {
+      'rune_pathblock': this.dependencies.maze,
+      'rune_silence': this.dependencies.uiManager,
+      'rune_void': this.dependencies.scene
+    };
+    return contextMap[runeName] || this.dependencies.scene;
   }
 }

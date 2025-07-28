@@ -1,112 +1,113 @@
-// src/core/GameManager.js
+// src/core/game/GameManager.js
 import { gameState } from './gameState.js';
-import { EndScreen } from '../ui/EndScreen.js';
+import { EndScreen } from '../ui/screens/EndScreen.js';
+import { EventBus } from './utils/EventBus.js';
 
 export class GameManager {
-  constructor(hud, scene, player, exitDoor, doorManager) {
-    this.hud = hud;
-    this.scene = scene;
-    this.player = player;
-    this.exitDoor = exitDoor;
-    this.doorManager = doorManager; // ✅ new
-
+  constructor({ hud, scene, player, exitDoor, doorManager }) {
+    this.dependencies = { hud, scene, player, exitDoor, doorManager };
     this.exitCountdown = 60;
     this.exitTimer = null;
     this.timerActive = false;
     this.exitActivated = false;
-
     this.endScreen = new EndScreen();
+
+    this.setupEventListeners();
+  }
+
+  setupEventListeners() {
+    EventBus.on('game:reset', () => this.resetGame());
+    EventBus.on('game:win', () => this.winGame());
+    EventBus.on('game:lose', () => this.loseGame());
   }
 
   startGame() {
+    this.cleanupTimer();
     gameState.reset();
-    this.hud?.showMessage("Find the treasures and reach the exit...");
-    this.hud?.updateRuneDisplay(null);
-    this.hud?.updateTimer(0);
+    
+    this.dependencies.hud?.showMessage("Find the treasures and reach the exit...");
+    this.dependencies.hud?.updateRuneDisplay(null);
+    this.dependencies.hud?.updateTimer(0);
+    
     this.timerActive = false;
     this.exitActivated = false;
-
-    if (this.exitTimer) {
-      clearInterval(this.exitTimer);
-      this.exitTimer = null;
-    }
-
-    gameState.timerRunning = false;
-    this.exitDoor.setLocked();
-
+    this.dependencies.exitDoor.setLocked();
   }
 
   triggerExitTimer() {
     if (this.timerActive || this.exitActivated) return;
 
-    console.log("✅ Exit timer triggered");
-
     this.exitActivated = true;
     this.timerActive = true;
 
-    this.doorManager.unlock();
-    this.exitDoor.setUnlocked(); // also update exitDoor itself
-
+    this.dependencies.doorManager.unlock();
+    this.dependencies.exitDoor.setUnlocked();
     gameState.timerRunning = true;
-    this.hud?.startTimer?.(this.exitCountdown);
 
+    this.startCountdown();
+  }
+
+  startCountdown() {
     let timeLeft = this.exitCountdown;
+    this.dependencies.hud?.startTimer?.(timeLeft);
 
     this.exitTimer = setInterval(() => {
-      console.log("⏱ Timer tick:", timeLeft);
       timeLeft--;
-      this.hud?.updateTimer(timeLeft);
+      this.dependencies.hud?.updateTimer(timeLeft);
 
       if (timeLeft <= 0) {
-        clearInterval(this.exitTimer);
-        this.exitTimer = null;
-        this.loseGame();
+        this.cleanupTimer();
+        EventBus.emit('game:lose');
       }
     }, 1000);
   }
 
-  isExitActivated() {
-    return this.exitActivated;
+  cleanupTimer() {
+    if (this.exitTimer) {
+      clearInterval(this.exitTimer);
+      this.exitTimer = null;
+    }
+    gameState.timerRunning = false;
   }
 
   winGame() {
-    if (this.exitTimer) {
-        clearInterval(this.exitTimer);
-        this.exitTimer = null;
-    }
-    gameState.timerRunning = false;
+    this.cleanupTimer();
+    this.endGame("🍃 You Escaped the Maze!", 0x55ff55);
+  }
+
+  loseGame() {
+    this.cleanupTimer();
+    this.endGame("💀 Time's up! You are trapped forever!", 0xff5555);
+  }
+
+  endGame(message, color) {
     gameState.gameOver = true;
-    gameState.movementLocked = true; 
-    this.hud?.updateTimer(0);
+    gameState.movementLocked = true;
+    
+    this.dependencies.hud?.updateTimer(0);
+    this.releasePlayerControls();
+    this.endScreen.showResult(message, color);
 
-    // NEW: stop player movement and show cursor
-    this.player.controls.unlock();               // Disable PointerLock
-    document.exitPointerLock?.();                // Fallback
-    document.body.style.cursor = 'auto';         // Show cursor
+    EventBus.emit('game:ended', { won: message.includes("Escaped") });
+  }
 
-    this.endScreen.showResult("🍃 You Escaped the Maze!");
+  releasePlayerControls() {
+    try {
+      this.dependencies.player.controls.unlock();
+      document.exitPointerLock?.();
+      document.body.style.cursor = 'auto';
+    } catch (error) {
+      console.error("Failed to release controls:", error);
     }
-
-    loseGame() {
-    if (this.exitTimer) {
-        clearInterval(this.exitTimer);
-        this.exitTimer = null;
-    }
-    gameState.timerRunning = false;
-    gameState.gameOver = true;
-    gameState.movementLocked = true; 
-    this.hud?.updateTimer(0);
-
-    // NEW: stop player movement and show cursor
-    this.player.controls.unlock();               // Disable PointerLock
-    document.exitPointerLock?.();
-    document.body.style.cursor = 'auto';
-
-    this.endScreen.showResult("💀 Time's up! You are trapped forever.");
-    }
-
+  }
 
   resetGame() {
+    this.cleanupTimer();
     this.startGame();
+    EventBus.emit('game:restarted');
+  }
+
+  isExitActivated() {
+    return this.exitActivated;
   }
 }

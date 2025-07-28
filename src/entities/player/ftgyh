@@ -1,0 +1,4898 @@
+TREASURE_MAZE_QUEST-RUNE/
+├── src/
+│   ├── core/               # Engine-critical systems
+│   │   ├── GameManager.js
+│   │   ├── gameState.js
+│   │   ├── InputHandler.js
+│   │   ├── interactions.js
+│   │   ├── game.js
+│   │   ├── physics/        # Extracted collision/raycasting
+│   │   │   ├── Collision.js
+│   │   │   └── Raycaster.js (new)
+│   │   └── utils/          # Shared utilities
+│   │       ├── Timer.js
+│   │       ├── Animation.js (new)
+│   │       └── EventBus.js (new, for decoupled communication)
+│   │
+│   ├── entities/           # Game objects
+│   │   ├── player/
+│   │   │   └── PlayerController.js
+│   │   ├── environment/
+│   │   │   ├── maze/
+│   │   │   │   ├── MazeBuilder.js
+│   │   │   │   └── mazeLayouts.js (renamed from mazelayout.js)
+│   │   │   └── secrets/
+│   │   │       └── SecretWalls.js
+│   │   ├── runes/
+│   │   │   ├── RuneManager.js
+│   │   │   ├── RuneTypes.js
+│   │   │   ├── effects/
+│   │   │   │   ├── RunEffects.js
+│   │   │   │   └── FakeRuneEffects.js
+│   │   │   └── visuals/    # Shaders/materials (optional)
+│   │   └── interactables/
+│   │       ├── TreasureManager.js
+│   │       ├── doors/
+│   │       │   ├── ExitDoor.js
+│   │       │   └── DoorManager.js
+│   │       └── mechanisms/
+│   │           ├── ExitMechanism.js
+│   │           └── ExitTriggerZone.js
+│   │
+│   ├── rendering/          # Graphics pipeline
+│   │   ├── Lighting.js
+│   │   ├── initScene.js
+│   │   └── postprocessing/ (future FX)
+│   │
+│   ├── ui/
+│   │   ├── screens/
+│   │   │   ├── StartScreen.js
+│   │   │   └── EndScreen.js
+│   │   ├── hud/
+│   │   │   ├── HUD.js
+│   │   │   └── Tooltip.js
+│   │   └── UIManager.js    # Now implemented!
+│   │
+│   ├── assets/             # Future: textures/sounds
+│   ├── config/             # Game constants
+│   │   └── constants.js    # Magic numbers live here
+│   │
+│   ├── loader.js           # Asset preloading
+│   └── main.js             # Entry point (leaner)
+
+file:GameManager.js
+// src/core/game/GameManager.js
+import { gameState } from './gameState.js';
+import { EndScreen } from '../ui/screens/EndScreen.js';
+import { EventBus } from './utils/EventBus.js';
+
+export class GameManager {
+  constructor({ hud, scene, player, exitDoor, doorManager }) {
+    this.dependencies = { hud, scene, player, exitDoor, doorManager };
+    this.exitCountdown = 60;
+    this.exitTimer = null;
+    this.timerActive = false;
+    this.exitActivated = false;
+    this.endScreen = new EndScreen();
+
+    this.setupEventListeners();
+  }
+
+  setupEventListeners() {
+    EventBus.on('game:reset', () => this.resetGame());
+    EventBus.on('game:win', () => this.winGame());
+    EventBus.on('game:lose', () => this.loseGame());
+  }
+
+  startGame() {
+    this.cleanupTimer();
+    gameState.reset();
+    
+    this.dependencies.hud?.showMessage("Find the treasures and reach the exit...");
+    this.dependencies.hud?.updateRuneDisplay(null);
+    this.dependencies.hud?.updateTimer(0);
+    
+    this.timerActive = false;
+    this.exitActivated = false;
+    this.dependencies.exitDoor.setLocked();
+  }
+
+  triggerExitTimer() {
+    if (this.timerActive || this.exitActivated) return;
+
+    this.exitActivated = true;
+    this.timerActive = true;
+
+    this.dependencies.doorManager.unlock();
+    this.dependencies.exitDoor.setUnlocked();
+    gameState.timerRunning = true;
+
+    this.startCountdown();
+  }
+
+  startCountdown() {
+    let timeLeft = this.exitCountdown;
+    this.dependencies.hud?.startTimer?.(timeLeft);
+
+    this.exitTimer = setInterval(() => {
+      timeLeft--;
+      this.dependencies.hud?.updateTimer(timeLeft);
+
+      if (timeLeft <= 0) {
+        this.cleanupTimer();
+        EventBus.emit('game:lose');
+      }
+    }, 1000);
+  }
+
+  cleanupTimer() {
+    if (this.exitTimer) {
+      clearInterval(this.exitTimer);
+      this.exitTimer = null;
+    }
+    gameState.timerRunning = false;
+  }
+
+  winGame() {
+    this.cleanupTimer();
+    this.endGame("🍃 You Escaped the Maze!", 0x55ff55);
+  }
+
+  loseGame() {
+    this.cleanupTimer();
+    this.endGame("💀 Time's up! You are trapped forever!", 0xff5555);
+  }
+
+  endGame(message, color) {
+    gameState.gameOver = true;
+    gameState.movementLocked = true;
+    
+    this.dependencies.hud?.updateTimer(0);
+    this.releasePlayerControls();
+    this.endScreen.showResult(message, color);
+
+    EventBus.emit('game:ended', { won: message.includes("Escaped") });
+  }
+
+  releasePlayerControls() {
+    try {
+      this.dependencies.player.controls.unlock();
+      document.exitPointerLock?.();
+      document.body.style.cursor = 'auto';
+    } catch (error) {
+      console.error("Failed to release controls:", error);
+    }
+  }
+
+  resetGame() {
+    this.cleanupTimer();
+    this.startGame();
+    EventBus.emit('game:restarted');
+  }
+
+  isExitActivated() {
+    return this.exitActivated;
+  }
+}
+
+ file:gameState.js
+// src/core/state/GameState.js
+class GameState {
+  constructor() {
+    this.reset();
+  }
+
+  reset() {
+    this._equippedRune = null;
+    this._treasuresCollected = 0;
+    this._totalTreasures = 3;
+    this._exitDoorOpen = false;
+    this._timerRunning = false;
+    this._timeLeft = 300;
+    this._gameOver = false;
+    this._movementLocked = false;
+    this._playerStats = {
+      runesUsed: 0,
+      wallsBroken: 0,
+      timePlayed: 0
+    };
+  }
+
+  // Getters and setters for controlled access
+  get equippedRune() {
+    return this._equippedRune;
+  }
+
+  set equippedRune(rune) {
+    if (rune && !RuneTypes[rune]) {
+      console.warn(`Invalid rune: ${rune}`);
+      return;
+    }
+    this._equippedRune = rune;
+    EventBus.emit('rune:changed', rune);
+  }
+
+  get treasuresCollected() {
+    return this._treasuresCollected;
+  }
+
+  set treasuresCollected(count) {
+    this._treasuresCollected = Math.min(count, this._totalTreasures);
+    if (this._treasuresCollected === this._totalTreasures) {
+      EventBus.emit('treasures:all-collected');
+    }
+  }
+
+  // Other getters/setters...
+  get gameOver() {
+    return this._gameOver;
+  }
+
+  set gameOver(value) {
+    this._gameOver = value;
+    EventBus.emit(value ? 'game:over' : 'game:restarted');
+  }
+
+  // State modification methods
+  collectTreasure() {
+    this.treasuresCollected++;
+    this._playerStats.timePlayed = performance.now() - this._gameStartTime;
+  }
+
+  useRune() {
+    if (this._equippedRune) {
+      this._playerStats.runesUsed++;
+      this.equippedRune = null;
+    }
+  }
+
+  // Serialization for saving
+  serialize() {
+    return {
+      version: 1,
+      stats: this._playerStats,
+      lastRune: this._equippedRune,
+      timestamp: Date.now()
+    };
+  }
+
+  // Deserialization for loading
+  deserialize(data) {
+    if (data.version !== 1) return false;
+    this._playerStats = data.stats || {};
+    this._equippedRune = data.lastRune || null;
+    return true;
+  }
+
+  startGameTimer() {
+  this._gameStartTime = performance.now();
+}
+
+get playTime() {
+  return (performance.now() - this._gameStartTime) / 1000;
+}
+validateState() {
+  return this._treasuresCollected <= this._totalTreasures && 
+         (!this._equippedRune || RuneTypes[this._equippedRune]);
+}
+}
+
+// Singleton instance
+export const gameState = new GameState();
+
+// Event constants
+export const GAME_EVENTS = {
+  TREASURE_COLLECTED: 'treasure:collected',
+  RUNE_CHANGED: 'rune:changed',
+  GAME_OVER: 'game:over',
+  GAME_RESET: 'game:reset'
+};
+
+file:InputHandler.js
+// src/core/input/InputHandler.js
+import { EventBus } from './utils/EventBus.js';
+
+export class InputHandler {
+  constructor() {
+    // Core movement keys (WASD by default)
+    this.keyBindings = {
+      moveForward: 'KeyW',
+      moveBackward: 'KeyS',
+      moveLeft: 'KeyA',
+      moveRight: 'KeyD',
+      useRune: 'KeyR'
+    };
+
+    this.keyStates = {};
+    this.mouseState = {
+      leftButton: false,
+      position: { x: 0, y: 0 }
+    };
+
+    this.setupListeners();
+  }
+
+  setupListeners() {
+    // Keyboard
+    document.addEventListener('keydown', (e) => {
+      this.keyStates[e.code] = true;
+      if (e.code === this.keyBindings.useRune) {
+        EventBus.emit('input:use-rune');
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      this.keyStates[e.code] = false;
+    });
+
+    // Mouse
+    document.addEventListener('mousedown', (e) => {
+      if (e.button === 0) { // Left click
+        this.mouseState.leftButton = true;
+        EventBus.emit('input:interact');
+      }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 0) {
+        this.mouseState.leftButton = false;
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      this.mouseState.position.x = e.clientX;
+      this.mouseState.position.y = e.clientY;
+    });
+  }
+
+  getMovementVector() {
+    const move = { x: 0, z: 0 };
+    
+    if (this.keyStates[this.keyBindings.moveForward]) move.z -= 1;
+    if (this.keyStates[this.keyBindings.moveBackward]) move.z += 1;
+    if (this.keyStates[this.keyBindings.moveLeft]) move.x -= 1;
+    if (this.keyStates[this.keyBindings.moveRight]) move.x += 1;
+
+    // Normalize diagonal movement
+    if (move.x !== 0 || move.z !== 0) {
+      const length = Math.sqrt(move.x * move.x + move.z * move.z);
+      move.x /= length;
+      move.z /= length;
+    }
+
+    return move;
+  }
+
+  isMouseDown() {
+    return this.mouseState.leftButton;
+  }
+
+  update() {
+    // Currently just handles mouse lock API
+    if (document.pointerLockElement) {
+      // Mouse look handled by PointerLockControls
+    }
+  }
+}
+
+file:game.js
+// src/core/Game.js
+import * as THREE from 'three';
+import { PlayerController } from '../entities/player/PlayerController.js';
+import { initScene } from '../rendering/initScene.js';
+import { MazeBuilder } from '../entities/environment/maze/MazeBuilder.js';
+import { CollisionSystem } from '../core/physics/Collision.js';
+import { RuneManager } from '../entities/runes/RuneManager.js';
+import { InteractionManager } from '../core/interactions.js';
+import { gameState } from './gameState';
+import { HUD } from '../ui/hud/HUD.js';
+import { GameManager } from './GameManager.js';
+import { spawnExitMechanism } from '../entities/interactables/mechanisms/ExitMechanism.js';
+import { DoorManager } from '../entities/interactables/doors/DoorManager.js';
+import { InputHandler } from './InputHandler.js';
+import { TreasureManager } from '../entities/interactables/TreasureManager.js';
+import { maze1 } from '../entities/environment/maze/MazeLayout.js';
+import { SecretWallSystem } from '../entities/environment/secrets/SecretWalls.js';
+import { StartScreen } from '../ui/screens/StartScreen.js';
+
+export class Game {
+  constructor(container) {
+    this.container = container;
+    this.clock = new THREE.Clock();
+    this.components = {};
+    this.systems = {};
+    this._bindMethods();
+  }
+
+  async start() {
+    try {
+      this._setupScene();
+      this._setupUI();
+      await this._setupGameWorld();
+      this._setupEventListeners();
+      this._startGameLoop();
+    } catch (error) {
+      console.error('Game startup failed:', error);
+      this._handleCriticalError();
+    }
+  }
+
+  _setupScene() {
+    const { scene, camera, renderer } = initScene(this.container);
+    this.scene = scene;
+    this.camera = camera;
+    this.renderer = renderer;
+  }
+
+  _setupUI() {
+    this.startScreen = new StartScreen();
+    this.hud = new HUD();
+  }
+
+  async _setupGameWorld() {
+    return new Promise((resolve) => {
+      this.startScreen.show(async () => {
+        document.body.requestPointerLock?.();
+        this._initializeGameComponents();
+        this._initializeGameSystems();
+        resolve();
+      });
+    });
+  }
+
+  _initializeGameComponents() {
+    // Maze and Environment
+    const maze = MazeBuilder(this.scene);
+    this.components.maze = maze;
+    this.components.walls = maze.walls;
+    this.components.secretObjects = maze.secretObjects;
+
+    // Player
+    const startPos = maze1.objects.playerStart;
+    this.components.player = new PlayerController(this.camera, this.scene);
+    this.components.player.controls.object.position.set(
+      startPos.x * maze1.tileSize,
+      1,
+      startPos.z * maze1.tileSize
+    );
+
+    // Game Systems
+    this.components.runeManager = new RuneManager(this.scene);
+    this.components.treasureManager = new TreasureManager(this.scene, this.hud);
+    this.components.spawnExitMechanism = new spawnExitMechanism(this.scene);
+    this.components.doorManager = new DoorManager(
+      this.components.spawnExitMechanism.door,
+      this.components.gameManager
+    );
+
+    // Initialize managers
+    this.components.runeManager.spawnFromMap(maze1);
+    this.components.treasureManager.spawnFromMap(maze1);
+    gameState.totalTreasures = this.components.treasureManager.getTreasures().length;
+  }
+
+  _initializeGameSystems() {
+    // Collision System
+    this.systems.collision = new CollisionSystem(
+      this.components.walls, 
+      this.scene
+    );
+
+    // Interaction System
+    this.systems.interaction = new InteractionManager({
+      camera: this.camera,
+      scene: this.scene,
+      runeManager: this.components.runeManager,
+      doorManager: this.components.doorManager,
+      hud: this.hud,
+      player: this.components.player,
+      gameManager: this.components.gameManager,
+      maze: this.components.maze,
+      treasureManager: this.components.treasureManager
+    });
+
+    // Input System
+    this.systems.input = new InputHandler(
+      this.systems.interaction,
+      this.components.player
+    );
+
+    // Secret Wall System
+    this.systems.secrets = new SecretWallSystem(
+      this.components.secretObjects,
+      this.scene,
+      this.hud,
+      this.systems.interaction
+    );
+
+    // Game State System
+    this.systems.gameState = new GameManager(
+      this.hud,
+      this.scene,
+      this.components.player,
+      this.components.spawnExitMechanism.door,
+      this.components.spawnExitMechanism.mechanism
+    );
+  }
+
+  _setupEventListeners() {
+    window.addEventListener('resize', this.handleResize);
+    // Add other event listeners as needed
+  }
+
+  _startGameLoop() {
+    const animate = () => {
+      requestAnimationFrame(animate);
+      const delta = this.clock.getDelta();
+      
+      try {
+        this._updateGame(delta);
+        this.renderer.render(this.scene, this.camera);
+      } catch (error) {
+        console.error('Game loop error:', error);
+        // Implement error recovery or graceful degradation
+      }
+    };
+    
+    animate();
+  }
+
+  _updateGame(delta) {
+    // Update player
+    const prevPos = this.components.player.controls.object.position.clone();
+    this.components.player.update(delta);
+
+    // Handle collisions
+    if (this.systems.collision.check(this.components.player.controls.object.position)) {
+      this.components.player.controls.object.position.copy(prevPos);
+    }
+
+    // Update systems
+    this.components.runeManager.update(performance.now());
+    this.systems.secrets.update(this.components.player);
+    this.systems.interaction.update(delta);
+    this.components.spawnExitMechanism.update();
+
+    // Update HUD and other UI elements
+    this.hud.update({
+      rune: gameState.equippedRune,
+      timeLeft: gameState.timeLeft,
+      treasuresCollected: gameState.treasuresCollected
+    });
+  }
+
+  _bindMethods() {
+    this.handleResize = this.handleResize.bind(this);
+  }
+
+  handleResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  _handleCriticalError() {
+    // Implement graceful error handling
+    alert('A critical error occurred. The game will reload.');
+    window.location.reload();
+  }
+
+  dispose() {
+    // Clean up all resources
+    window.removeEventListener('resize', this.handleResize);
+    
+    // Dispose all components
+    Object.values(this.components).forEach(component => {
+      if (component.dispose) component.dispose();
+    });
+    
+    // Dispose all systems
+    Object.values(this.systems).forEach(system => {
+      if (system.dispose) system.dispose();
+    });
+    
+    // Clear scene
+    while(this.scene.children.length > 0) {
+      const child = this.scene.children[0];
+      if (child.dispose) child.dispose();
+      this.scene.remove(child);
+    }
+    
+    // Remove renderer
+    if (this.renderer.domElement.parentNode === this.container) {
+      this.container.removeChild(this.renderer.domElement);
+    }
+  }
+}
+
+file: interactions.js
+// src/core/interaction/InteractionManager.js
+import { GameRaycaster } from './physics/Raycaster.js';
+import { gameState } from './gameState.js';
+import { RuneEffects } from '../entities/runes/effects/RuneEffects.js';
+import { RuneTypes } from '../entities/runes/RuneTypes.js';
+import { Tooltip } from '../ui/hud/Tooltip.js';
+
+export class InteractionManager {
+  constructor({
+    camera,
+    scene,
+    runeManager,
+    doorManager,
+    trapManager,
+    treasureManager,
+    gameManager,
+    uiManager,
+    maze,
+    player
+  }) {
+    this.dependencies = {
+      camera,
+      scene,
+      runeManager,
+      doorManager,
+      trapManager,
+      treasureManager,
+      gameManager,
+      uiManager,
+      maze,
+      player
+    };
+
+    this.raycaster = new GameRaycaster(camera, { range: 3, debug: false });
+    this.tooltip = new Tooltip();
+    this.interactables = [];
+    this.hoveredObject = null;
+
+    this.setupEventListeners();
+  }
+
+  setupEventListeners() {
+    document.addEventListener('click', (e) => {
+      if (gameState.gameOver) return;
+      this.raycaster.updateFromEvent(e);
+      this.handleInteraction();
+    });
+
+    // Optional hover detection
+    document.addEventListener('mousemove', (e) => {
+      this.raycaster.updateFromEvent(e);
+      this.updateHoverState();
+    });
+  }
+
+  handleInteraction() {
+    const targets = {
+      runes: this.dependencies.runeManager.getRunes(),
+      doors: this.dependencies.doorManager?.getDoors() || [],
+      // Add other target types...
+    };
+
+    const intersections = this.raycaster.getIntersections(targets);
+    if (!intersections.length) return;
+
+    // Process interactions in priority order
+    const interactionHandled = this.processRunePickup(intersections) ||
+      this.processExitMechanism(intersections) ||
+      this.processDoorInteraction(intersections) ||
+      this.processTrapTrigger(intersections) ||
+      this.processTreasurePickup(intersections) ||
+      this.processRuneTargets(intersections);
+
+    if (!interactionHandled) {
+      console.log('No valid interaction');
+    }
+  }
+
+  processRunePickup(intersections) {
+    const runeHit = intersections.find(h => h.objectType === 'rune');
+    if (!runeHit) return false;
+
+    this.pickupRune(runeHit.object);
+    return true;
+  }
+
+  processExitMechanism(intersections) {
+    const mech = this.dependencies.scene.getObjectByName("exit_mechanism");
+    if (!mech || this.dependencies.gameManager?.isExitActivated?.()) return false;
+
+    const mechHit = intersections.find(h => h.object === mech);
+    if (!mechHit) return false;
+
+    if (gameState.treasuresCollected >= gameState.totalTreasures) {
+      this.dependencies.scene.remove(mech);
+      this.dependencies.uiManager.showMessage("Exit activated! Hurry!");
+      this.dependencies.gameManager.triggerExitTimer();
+    } else {
+      const missing = gameState.totalTreasures - gameState.treasuresCollected;
+      this.dependencies.uiManager.showMessage(`Need ${missing} more treasure${missing > 1 ? 's' : ''}`);
+    }
+    return true;
+  }
+
+  async pickupRune(runeObject) {
+    if (gameState.equippedRune) {
+      this.dependencies.uiManager.showMessage("Already equipped a rune!");
+      return;
+    }
+
+    const rune = this.dependencies.runeManager.getRuneFromObject(runeObject);
+    if (!rune) {
+      console.warn("Invalid rune object");
+      return;
+    }
+
+    const runeData = RuneTypes[rune.name];
+    if (!runeData) {
+      console.warn(`Unknown rune type: ${rune.name}`);
+      return;
+    }
+
+    this.dependencies.runeManager.removeRune(rune);
+    this.dependencies.uiManager.updateRuneDisplay(rune.name);
+    this.dependencies.uiManager.showMessage(`Picked up ${runeData.label}`);
+    this.tooltip.show(runeData.description);
+
+    if (runeData.isTrap) {
+      await this.activateTrapRune(rune.name);
+    } else {
+      gameState.equippedRune = rune.name;
+    }
+  }
+
+  async activateTrapRune(runeName) {
+    try {
+      const { FakeRuneEffects } = await import('../entities/runes/effects/FakeRuneEffects.js');
+      const context = this.getEffectContext(runeName);
+      FakeRuneEffects[runeName]?.onEquip?.(
+        this.dependencies.player, 
+        gameState, 
+        this.dependencies.uiManager, 
+        context
+      );
+    } catch (error) {
+      console.error("Failed to activate trap rune:", error);
+    }
+  }
+
+  useRune() {
+    if (!gameState.equippedRune) {
+      this.dependencies.uiManager.showMessage("No rune equipped!");
+      return false;
+    }
+
+    const runeName = gameState.equippedRune;
+    RuneEffects[runeName]?.activate?.(
+      this.dependencies.player,
+      this.dependencies.scene,
+      this.dependencies.uiManager,
+      null
+    );
+
+    gameState.equippedRune = null;
+    this.dependencies.uiManager.updateRuneDisplay(null);
+    this.dependencies.uiManager.showMessage(`${runeName.replace("rune_", "")} rune used`);
+
+    return true;
+  }
+
+  removeInteractable(object) {
+    if (!object || !this.interactables) {
+      console.warn("Invalid object or interactables array");
+      return false;
+    }
+
+    const index = this.interactables.findIndex(
+      item => item === object || item.uuid === object.uuid
+    );
+    
+    if (index !== -1) {
+      this.interactables.splice(index, 1);
+      if (object.parent === this.dependencies.scene) {
+        this.dependencies.scene.remove(object);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  updateHoverState() {
+    // Implement hover highlighting logic here
+  }
+
+  update() {
+    // Frame update logic
+    if (this.hoveredObject) {
+      // Handle hover effects
+    }
+  }
+
+  getEffectContext(runeName) {
+    const contextMap = {
+      'rune_pathblock': this.dependencies.maze,
+      'rune_silence': this.dependencies.uiManager,
+      'rune_void': this.dependencies.scene
+    };
+    return contextMap[runeName] || this.dependencies.scene;
+  }
+}
+
+file: Collision.js
+// src/core/physics/CollisionSystem.js
+import * as THREE from 'three';
+
+export class CollisionSystem {
+  /**
+   * Creates a new collision system
+   * @param {THREE.Scene} scene - The game scene
+   * @param {Object} config - Configuration options
+   * @param {boolean} [config.debug=false] - Show debug visuals
+   * @param {number} [config.playerColliderSize=0.4] - Player collider radius
+   */
+  constructor(scene, { debug = false, playerColliderSize = 0.4 } = {}) {
+    this.colliders = [];
+    this.scene = scene;
+    this.debug = debug;
+    this.playerColliderSize = playerColliderSize;
+    this.debugHelpers = [];
+  }
+
+  /**
+   * Initialize colliders from wall meshes
+   * @param {THREE.Mesh[]} walls - Array of wall meshes
+   */
+  init(walls) {
+    this.clearColliders();
+    walls.forEach(wall => this.addCollider(wall));
+  }
+
+  /**
+   * Add a new collider
+   * @param {THREE.Mesh} mesh - The mesh to add as collider
+   * @param {Object} [options] - Additional options
+   * @param {boolean} [options.isJumpable] - Can be jumped over
+   */
+  addCollider(mesh, { isJumpable = false } = {}) {
+    mesh.updateMatrixWorld(true);
+    const collider = {
+      mesh,
+      box: new THREE.Box3().setFromObject(mesh),
+      isJumpable
+    };
+
+    this.colliders.push(collider);
+
+    if (this.debug) {
+      const helper = new THREE.Box3Helper(collider.box, 0xff0000);
+      this.scene.add(helper);
+      this.debugHelpers.push(helper);
+    }
+  }
+
+  /**
+   * Check if position collides with any collider
+   * @param {THREE.Vector3} position - Position to check
+   * @param {Object} [options] - Collision options
+   * @param {boolean} [options.canJump] - Can jump over obstacles
+   * @returns {boolean} - True if collision detected
+   */
+  checkCollision(position, { canJump = false } = {}) {
+    const playerBox = new THREE.Box3().setFromCenterAndSize(
+      position.clone(),
+      new THREE.Vector3().setScalar(this.playerColliderSize * 2)
+    );
+
+    return this.colliders.some(({ box, isJumpable }) => {
+      if (isJumpable && canJump) return false;
+      return box.intersectsBox(playerBox);
+    });
+  }
+
+  /**
+   * Clear all colliders and debug helpers
+   */
+  clearColliders() {
+    if (this.debug) {
+      this.debugHelpers.forEach(helper => this.scene.remove(helper));
+      this.debugHelpers = [];
+    }
+    this.colliders = [];
+  }
+
+  /**
+   * Toggle debug visualization
+   * @param {boolean} enabled - Whether to show debug visuals
+   */
+  toggleDebug(enabled) {
+    this.debug = enabled;
+    this.debugHelpers.forEach(helper => {
+      helper.visible = enabled;
+    });
+  }
+}
+
+file: Raycaster.js
+// src/core/physics/Raycaster.js
+import * as THREE from 'three';
+
+export class GameRaycaster extends THREE.Raycaster {
+  /**
+   * Enhanced raycaster with game-specific functionality
+   * @param {THREE.Camera} camera 
+   * @param {Object} config 
+   * @param {number} config.range - Max interaction distance
+   * @param {boolean} config.debug - Show debug visuals
+   */
+  constructor(camera, { range = 5, debug = false } = {}) {
+    super();
+    this.camera = camera;
+    this.far = range;
+    this.debug = debug;
+    this.mouse = new THREE.Vector2();
+    this.debugHelpers = [];
+  }
+
+  /**
+   * Update mouse coordinates from event
+   * @param {MouseEvent} event 
+   */
+  updateFromEvent(event) {
+    this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  }
+
+  /**
+   * Get intersections with prioritized objects
+   * @param {Object} targets 
+   * @returns {Array} Sorted intersections
+   */
+  getIntersections(targets) {
+    this.setFromCamera(this.mouse, this.camera);
+    
+    const allIntersections = [];
+    
+    // Check each object type in priority order
+    if (targets.runes) {
+      const hits = this.intersectObjects(targets.runes, true);
+      hits.forEach(h => h.objectType = 'rune');
+      allIntersections.push(...hits);
+    }
+    
+    if (targets.doors) {
+      const hits = this.intersectObjects(targets.doors, true);
+      hits.forEach(h => h.objectType = 'door');
+      allIntersections.push(...hits);
+    }
+
+    // Add other object types similarly...
+
+    // Sort by distance and return
+    return allIntersections.sort((a, b) => a.distance - b.distance);
+  }
+
+  /**
+   * Add debug visualization for raycast
+   * @param {THREE.Scene} scene 
+   */
+  enableDebug(scene) {
+    if (!this.debug) return;
+    
+    const rayHelper = new THREE.ArrowHelper(
+      this.ray.direction,
+      this.ray.origin,
+      this.far,
+      0xff0000,
+      0.2,
+      0.1
+    );
+    scene.add(rayHelper);
+    this.debugHelpers.push(rayHelper);
+  }
+
+  /**
+   * Clean up debug visuals
+   * @param {THREE.Scene} scene 
+   */
+  disableDebug(scene) {
+    this.debugHelpers.forEach(helper => scene.remove(helper));
+    this.debugHelpers = [];
+  }
+}
+
+file: Timer.js
+// src/core/Timer.js
+
+export class Timer {
+  constructor(onEnd, hud) {
+    this.hud = hud;
+    this.onEnd = onEnd;
+    this.remaining = 0;
+    this.intervalId = null;
+  }
+
+  start(seconds) {
+    this.remaining = seconds;
+    this.stop();
+
+    this.intervalId = setInterval(() => {
+      this.remaining--;
+      this.hud.updateTimer(this.remaining);
+
+      if (this.remaining <= 0) {
+        this.stop();
+        this.onEnd?.();
+      }
+    }, 1000);
+  }
+
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+}
+
+file: Animation.js
+// src/core/utils/AnimationSystem.js
+import * as THREE from 'three';
+
+export class AnimationSystem {
+  constructor() {
+    this.activeAnimations = new Set();
+    this.animationId = 0;
+  }
+
+  /**
+   * Core animation loop management
+   */
+  addAnimation(fn, id = null) {
+    const animationId = id || this.animationId++;
+    this.activeAnimations.add({ id: animationId, fn });
+    return animationId;
+  }
+
+  removeAnimation(id) {
+    for (const anim of this.activeAnimations) {
+      if (anim.id === id) {
+        this.activeAnimations.delete(anim);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  update(deltaTime) {
+    this.activeAnimations.forEach(({ fn }) => fn(deltaTime));
+  }
+
+  clearAll() {
+    this.activeAnimations.clear();
+  }
+
+  /**
+   * DOM Element Animations
+   */
+  static fadeElement(element, { 
+    from = 0, 
+    to = 1, 
+    duration = 300, 
+    easing = 'ease-out',
+    display = 'block'
+  }) {
+    return new Promise(resolve => {
+      element.style.opacity = from;
+      element.style.display = display;
+      element.style.transition = `opacity ${duration}ms ${easing}`;
+
+      requestAnimationFrame(() => {
+        element.style.opacity = to;
+        setTimeout(resolve, duration);
+      });
+    });
+  }
+
+  static transformElement(element, {
+    transformFrom = '',
+    transformTo = '',
+    duration = 300,
+    easing = 'ease-out'
+  }) {
+    return new Promise(resolve => {
+      element.style.transform = transformFrom;
+      element.style.transition = `transform ${duration}ms ${easing}`;
+
+      requestAnimationFrame(() => {
+        element.style.transform = transformTo;
+        setTimeout(resolve, duration);
+      });
+    });
+  }
+
+  /**
+   * 3D Object Animations
+   */
+  static animatePosition(object, {
+    from = object.position.clone(),
+    to,
+    duration = 1,
+    easing = t => t,
+    onUpdate = () => {},
+    onComplete = () => {}
+  }) {
+    const startTime = performance.now();
+    const delta = new THREE.Vector3().subVectors(to, from);
+
+    function update(currentTime) {
+      const elapsed = (currentTime - startTime) / 1000;
+      const progress = Math.min(elapsed / duration, 1);
+      const easedProgress = easing(progress);
+
+      object.position.copy(
+        from.clone().add(delta.clone().multiplyScalar(easedProgress))
+      );
+
+      onUpdate(object.position);
+
+      if (progress < 1) {
+        requestAnimationFrame(update);
+      } else {
+        onComplete();
+      }
+    }
+
+    requestAnimationFrame(update);
+  }
+
+  /**
+   * Special Effects
+   */
+  static async screenEffect(type, duration = 1000) {
+    const overlay = document.getElementById('effect-overlay') || 
+      this.createEffectOverlay();
+
+    switch (type) {
+      case 'stun':
+        return this.applyStunEffect(overlay, duration);
+      case 'void':
+        return this.applyVoidEffect(overlay, duration);
+      case 'silence':
+        return this.applySilenceEffect(duration);
+      default:
+        console.warn(`Unknown effect type: ${type}`);
+    }
+  }
+
+  static createEffectOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'effect-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0;
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  static applyStunEffect(overlay, duration) {
+    return new Promise(resolve => {
+      overlay.style.background = 'rgba(0, 0, 0, 0.6)';
+      overlay.style.transition = 'none';
+      
+      this.fadeElement(overlay, { to: 1, duration: 100 });
+
+      const shakeId = this.addAnimation((delta) => {
+        const intensity = 1.5;
+        const x = Math.sin(performance.now() * 0.05) * intensity;
+        const y = Math.cos(performance.now() * 0.06) * intensity;
+        overlay.style.transform = `translate(${x}px, ${y}px)`;
+      });
+
+      setTimeout(() => {
+        this.removeAnimation(shakeId);
+        overlay.style.transform = '';
+        this.fadeElement(overlay, { to: 0, duration: 500 })
+          .then(resolve);
+      }, duration);
+    });
+  }
+
+  /**
+   * Utility Animations
+   */
+  static createIdleBounce(object, {
+    amplitude = 0.05,
+    speed = 2,
+    baseY = object.position.y
+  }) {
+    let time = 0;
+    
+    return this.addAnimation((delta) => {
+      time += delta;
+      object.position.y = baseY + 
+        Math.sin(time * speed * Math.PI * 2) * amplitude;
+    });
+  }
+
+  static createPulseEffect(object, {
+    scaleFrom = 1,
+    scaleTo = 1.2,
+    duration = 0.5,
+    repeat = Infinity
+  }) {
+    let cycleTime = 0;
+    const originalScale = object.scale.clone();
+
+    return this.addAnimation((delta) => {
+      cycleTime += delta;
+      if (cycleTime > duration) {
+        if (repeat === Infinity) {
+          cycleTime = 0;
+        } else if (--repeat <= 0) {
+          object.scale.copy(originalScale);
+          return false; // Signal to remove animation
+        }
+      }
+
+      const progress = cycleTime / duration;
+      const pulseScale = scaleFrom + 
+        (scaleTo - scaleFrom) * Math.sin(progress * Math.PI);
+      
+      object.scale.copy(originalScale).multiplyScalar(pulseScale);
+      return true;
+    });
+  }
+}
+
+// Singleton instance for global access
+export const animationSystem = new AnimationSystem();
+
+// Helper for requestAnimationFrame integration
+export function updateAnimationSystem(deltaTime) {
+  animationSystem.update(deltaTime);
+}
+
+file: EventBus.js
+// src/core/utils/EventBus.js
+export const EventBus = {
+  events: new Map(),
+
+  on(event, callback) {
+    if (!this.events.has(event)) {
+      this.events.set(event, []);
+    }
+    this.events.get(event).push(callback);
+  },
+
+  emit(event, data) {
+    if (this.events.has(event)) {
+      this.events.get(event).forEach(cb => cb(data));
+    }
+  },
+
+  off(event, callback) {
+    if (this.events.has(event)) {
+      const callbacks = this.events.get(event).filter(cb => cb !== callback);
+      this.events.set(event, callbacks);
+    }
+  }
+};
+
+file: PlayerController.js
+// src/entities/player/PlayerController.js
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
+import { gameState } from '../../core/gameState.js';
+import { EventBus } from '../../core/utils/EventBus.js';
+import { InputHandler } from '../../core/InputHandler.js';
+
+export class PlayerController {
+  constructor(camera, scene) {
+    this.camera = camera;
+    this.scene = scene;
+    this.baseSpeed = 5;
+    this.speed = this.baseSpeed;
+    
+    // Movement state
+    this.movement = {
+      forward: false,
+      backward: false,
+      left: false,
+      right: false
+    };
+    
+    // Physics
+    this.velocity = new THREE.Vector3();
+    this.direction = new THREE.Vector3();
+    
+    // Controls
+    this.controls = new PointerLockControls(camera, document.body);
+    scene.add(this.controls.object);
+    
+    // Effects state
+    this.effects = {
+      invertedControls: false,
+      inQuicksand: false,
+      quicksandStartY: null,
+      quicksandTime: 0,
+      stunned: false
+    };
+
+    this.setupEventListeners();
+  }
+
+  setupEventListeners() {
+    // Pointer lock on click
+    document.addEventListener('click', () => {
+      if (!gameState.gameOver) this.controls.lock();
+    });
+
+    // Input events
+    EventBus.on(InputHandler.KEY_DOWN, (code) => this.handleKeyDown(code));
+    EventBus.on(InputHandler.KEY_UP, (code) => this.handleKeyUp(code));
+  }
+
+  handleKeyDown(code) {
+    switch (code) {
+      case 'KeyW': this.movement.forward = true; break;
+      case 'KeyS': this.movement.backward = true; break;
+      case 'KeyA': this.movement.left = true; break;
+      case 'KeyD': this.movement.right = true; break;
+    }
+  }
+
+  handleKeyUp(code) {
+    switch (code) {
+      case 'KeyW': this.movement.forward = false; break;
+      case 'KeyS': this.movement.backward = false; break;
+      case 'KeyA': this.movement.left = false; break;
+      case 'KeyD': this.movement.right = false; break;
+    }
+  }
+
+  update(deltaTime) {
+    if (!this.controls.isLocked || gameState.movementLocked) return;
+
+    this.updateMovement(deltaTime);
+    this.updateQuicksand(deltaTime);
+  }
+
+  updateMovement(deltaTime) {
+    this.direction.set(0, 0, 0);
+    
+    const forward = this.effects.invertedControls ? -1 : 1;
+    if (this.movement.forward) this.direction.z += 1 * forward;
+    if (this.movement.backward) this.direction.z -= 1 * forward;
+    if (this.movement.left) this.direction.x -= 1 * forward;
+    if (this.movement.right) this.direction.x += 1 * forward;
+
+    this.direction.normalize();
+
+    const moveX = this.direction.x * this.speed * deltaTime;
+    const moveZ = this.direction.z * this.speed * deltaTime;
+
+    this.controls.moveRight(moveX);
+    this.controls.moveForward(moveZ);
+  }
+
+  updateQuicksand(deltaTime) {
+    if (!this.effects.inQuicksand) {
+      this.effects.quicksandTime = 0;
+      return;
+    }
+
+    const { object } = this.controls;
+    this.effects.quicksandTime += deltaTime;
+
+    // Sinking effect
+    const minSink = this.effects.quicksandStartY - 0.5;
+    if (object.position.y > minSink) {
+      object.position.y = Math.max(minSink, object.position.y - 0.005);
+    }
+
+    // Stun after prolonged exposure
+    if (!this.effects.stunned && this.effects.quicksandTime >= 7) {
+      this.stunMovement(4, () => {
+        this.effects.quicksandTime = 0;
+        this.effects.stunned = false;
+      });
+    }
+  }
+
+  // --- Effect Methods ---
+  setMovementSpeed(multiplier) {
+    this.speed = this.baseSpeed * multiplier;
+  }
+
+  resetMovementSpeed() {
+    this.speed = this.baseSpeed;
+  }
+
+  applyQuicksandEffect() {
+    if (!this.effects.inQuicksand) {
+      this.effects.inQuicksand = true;
+      this.effects.quicksandStartY = this.controls.object.position.y;
+      this.setMovementSpeed(0.1);
+    }
+  }
+
+  exitQuicksand() {
+    if (this.effects.inQuicksand) {
+      this.controls.object.position.y = this.effects.quicksandStartY;
+      this.effects.inQuicksand = false;
+      this.resetMovementSpeed();
+    }
+  }
+
+  invertControls(duration = 10) {
+    this.effects.invertedControls = true;
+    setTimeout(() => {
+      this.effects.invertedControls = false;
+    }, duration * 1000);
+  }
+
+  stunMovement(duration = 5, onComplete) {
+    gameState.movementLocked = true;
+    this.setMovementSpeed(0);
+
+    setTimeout(() => {
+      gameState.movementLocked = false;
+      this.effects.stunned = false;
+      this.setMovementSpeed(this.effects.inQuicksand ? 0.1 : 1);
+      onComplete?.();
+    }, duration * 1000);
+  }
+
+  // --- Control Methods ---
+  releaseControls() {
+    this.controls.unlock();
+    document.exitPointerLock?.();
+    document.body.style.cursor = 'auto';
+  }
+
+  reset() {
+    this.releaseControls();
+    this.movement = {
+      forward: false,
+      backward: false,
+      left: false,
+      right: false
+    };
+    this.resetMovementSpeed();
+  }
+}
+
+file: MazeBuilder.js
+import * as THREE from 'three';
+import { maze1 } from './MazeLayout.js';
+import { SecretWallSystem } from '../secrets/SecretWalls.js';
+
+// Constants moved to config
+const WALL_HEIGHT_MULTIPLIER = 2;
+const WALL_COLOR = 0x1c1f22;
+const FLOOR_COLOR = 0xd8cab8;
+
+export class MazeBuilder {
+  constructor(scene, secretObjects = []) {
+    this.scene = scene;
+    this.secretObjects = secretObjects;
+    this.tileSize = maze1.tileSize;
+    this.wallHeight = this.tileSize * WALL_HEIGHT_MULTIPLIER;
+    
+    // Reusable geometries
+    this.floorGeometry = new THREE.PlaneGeometry(this.tileSize, this.tileSize);
+    this.wallGeometry = new THREE.BoxGeometry(this.tileSize, this.wallHeight, this.tileSize);
+    
+    // Reusable materials
+    this.wallMaterial = new THREE.MeshStandardMaterial({ color: WALL_COLOR });
+    this.floorMaterial = new THREE.MeshStandardMaterial({ color: FLOOR_COLOR });
+    
+    this.walls = [];
+    this.openTiles = [];
+  }
+
+  build() {
+    this._buildTerrain();
+    this._placeEasterEggs();
+    
+    return {
+      walls: this.walls,
+      openTiles: this.openTiles,
+      blockAllPaths: this._createPathBlocker(),
+      tileSize: this.tileSize,
+      layout: maze1.layout,
+      objects: maze1.objects
+    };
+  }
+
+  _buildTerrain() {
+    const rows = maze1.layout.length;
+    const cols = maze1.layout[0].length;
+
+    for (let z = 0; z < rows; z++) {
+      for (let x = 0; x < cols; x++) {
+        const char = maze1.layout[z][x];
+        const worldX = x * this.tileSize;
+        const worldZ = z * this.tileSize;
+
+        this._createFloor(worldX, worldZ);
+        char === '#' 
+          ? this._createWall(worldX, worldZ) 
+          : this._createFakeWall(worldX, worldZ);
+      }
+    }
+  }
+
+  _createFloor(x, z) {
+    const floor = new THREE.Mesh(this.floorGeometry, this.floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(x, 0, z);
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+  }
+
+  _createWall(x, z) {
+    const wall = new THREE.Mesh(this.wallGeometry, this.wallMaterial);
+    wall.position.set(x, this.wallHeight / 2, z);
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    wall.userData.isObstacle = true;
+    this.scene.add(wall);
+    this.walls.push(wall);
+  }
+
+  _createFakeWall(x, z) {
+    const fakeWall = new THREE.Mesh(this.wallGeometry, this.wallMaterial);
+    fakeWall.position.set(x, this.wallHeight / 2, z);
+    fakeWall.visible = false;
+    fakeWall.userData.isObstacle = false;
+    this.scene.add(fakeWall);
+    this.openTiles.push({ x, z, mesh: fakeWall });
+  }
+
+  _placeEasterEggs() {
+    maze1.objects.easterEggs.forEach(egg => {
+      const specialWall = SecretWallSystem(egg, this.scene, this.secretObjects);
+      if (specialWall) {
+        this.walls.push(specialWall);
+      }
+    });
+  }
+
+  _createPathBlocker(steps = 10) {
+    return () => {
+      this.openTiles.forEach(tile => tile.mesh.visible = true);
+
+      let counter = 0;
+      const stepHandler = () => {
+        if (++counter >= steps) {
+          this.openTiles.forEach(tile => tile.mesh.visible = false);
+          window.removeEventListener('keydown', stepHandler);
+        }
+      };
+
+      window.addEventListener('keydown', stepHandler);
+    };
+  }
+}
+
+file: MazeLayouts.js
+export const maze1 = {
+  tileSize: 3,
+  layout: [
+    "#############",
+    "#   #   r   #",
+    "# # # ##### #",
+    "#S#     #   #",
+    "### ### # ###",
+    "#     # #   #",
+    "# ##### ### #",
+    "#   T #   t #",
+    "# ###R##### #",
+    "# e #     E #",
+    "#############",
+  ],
+  objects: {
+    playerStart: { x: 1, z: 3 },
+    exit: { x: 9, z: 9 },
+    exitMechanism: { x: 3, z: 9 },
+    runes: [
+      { x: 5, z: 3, type: "rune_flight" },
+      { x: 5, z: 8, type: "rune_blink" },
+      { x: 9, z: 7, type: "rune_strength" },
+      { x: 2, z: 5, type: "rune_speed" },
+      { x: 6, z: 3, type: "rune_vision" },
+
+      { x: 5, z: 9, type: "rune_blink", isTrap: true },
+      { x: 6, z: 3, type: "rune_strength", isTrap: true }
+    ],
+    treasures: [
+      { x: 9, z: 7 },
+      { x: 3, z: 3 },
+      { x: 9, z: 5 },
+    ],
+    easterEggs: [
+      { x: 3, z: 2, type: "pass_through" },
+      { x: 10, z: 7, type: "breakable" },
+      { x: 7, z: 3, type: "low_wall" },
+      { x: 6, z: 9, type: "quicksand" }
+    ],
+  },
+};
+
+
+
+
+
+
+export const maze1hjb = {
+  tileSize: 3,
+  layout: [
+    "#####################",
+    "#   # r #     #   # #",
+    "# # ### # ### # # # #",
+    "# #         # # # # #",
+    "# ### ##### # # # # #",
+    "#     #   t # #   # #",
+    "##### # ##### ### # #",
+    "#   # #   R   #   # #",
+    "# # ### # ### # ### #",
+    "# #     #   # #     #",
+    "# # ##### # # ##### #",
+    "# #     # # #     # #",
+    "# ##### # # ### # # #",
+    "#       #       # # #",
+    "### ### ####### # # #",
+    "#   # e       # #   #",
+    "# # ######### # ### #",
+    "# #         S #   E #",
+    "#####################"
+  ],
+  objects: {
+    playerStart: { x: 15, z: 17 },
+    exit: { x: 17, z: 17 },
+    exitMechanism: { x: 5, z: 15 },
+    runes: [
+      // Core progression runes (required)
+      { x: 5, z: 1, type: "rune_strength"}, // For breakable walls
+      { x: 9, z: 7, type: "rune_flight"},   // For low walls
+      
+      // Optional utility runes
+      { x: 15, z: 1, type: "rune_blink" },  // Shortcut alternative
+      { x: 7, z: 5, type: "rune_vision" },  // Reveals hidden path
+      { x: 13, z: 3, type: "rune_speed" },  // Bypass quicksand
+      
+      // Fake runes (traps)
+      { x: 11, z: 15, type: "rune_blink", isTrap: true },
+      { x: 3, z: 9, type: "rune_strength", isTrap: true }
+    ],
+    treasures: [
+      { x: 7, z: 5 },  // Hidden behind vision wall
+      { x: 9, z: 13}, // Behind breakable wall
+      { x: 17, z: 3}   // On elevated platform
+    ],
+    easterEggs: [
+      { x: 8, z: 7, type: "breakable"},
+      { x: 10, z: 9, type: "low_wall"},
+      { x: 11, z: 10, type: "pass_through"},
+      { x: 15, z: 1, type: "quicksand"}
+    ]
+  }
+};
+
+
+
+
+
+
+
+export const maze12 = {
+  tileSize: 3,
+  layout: [
+    "#####################",
+    "#   r     #   #   E#",  // r=strength(4,1), E=exit(17,1)
+    "# ### ### # ### ###",
+    "#     #   #       #",
+    "##### # ###########",
+    "# t   #   #     e #",  // t=treasure(2,5), e=mechanism(15,5)
+    "# ##### # # ##### #",
+    "#       # #   R   #",  // R=flight(11,7)
+    "### ##### ### #####",
+    "#   #       #     #",
+    "# # # ####### ### #",
+    "# # #   t   #   # #",  // t=treasure(7,11)
+    "# # #### # ### # #",
+    "# #     # #     # #",
+    "# ##### # ##### # #",
+    "#       ≈       # #",  // ≈=quicksand(7,15)
+    "##### ####### #####",
+    "#   #       #   S#",  // S=start(15,17)
+    "# # ####### # # #",
+    "# #     T   # # #",  // T=treasure(9,19)
+    "#####################"
+  ],
+  objects: {
+    playerStart: { x: 15, z: 17 },
+    exit: { x: 17, z: 1 },
+    exitMechanism: { x: 15, z: 5 },
+    runes: [
+      // Required runes (2)
+      { x: 4, z: 1, type: "rune_strength" }, // For breakable walls
+      { x: 11, z: 7, type: "rune_flight"},  // For low walls
+      
+      // Optional runes (3)
+      { x: 2, z: 13, type: "rune_blink" },  // Alternative path
+      { x: 9, z: 5, type: "rune_vision" },  // Reveals hidden
+      { x: 17, z: 13, type: "rune_speed" }, // For quicksand
+      
+      // Traps (2)
+      { x: 7, z: 3, type: "rune_blink", isTrap: true },
+      { x: 13, z: 9, type: "rune_vision", isTrap: true }
+    ],
+    treasures: [
+      { x: 2, z: 5 },              // Early easy treasure
+      { x: 7, z: 11 },   // Behind breakable wall
+      { x: 9, z: 19}      // On high platform
+    ],
+    easterEggs: [
+      // Positioned in open spaces (not overlapping normal walls)
+      { x: 6, z: 5, type: "breakable" },
+      { x: 11, z: 15, type: "low_wall"},
+      { x: 5, z: 9, type: "pass_through" },
+      { x: 7, z: 15, type: "quicksand" }
+    ]
+  }
+};
+
+
+file: SecretWalls.js
+import * as THREE from 'three';
+
+// Constants
+const WALL_COLORS = {
+  PASS_THROUGH: 0x1c1f22,
+  BREAKABLE: 0x773333,
+  LOW_WALL: 0x22272b,
+  QUICKSAND: {
+    BASE: 0x665533,
+    EMISSIVE: 0x332200
+  }
+};
+
+const WALL_HEIGHTS = {
+  STANDARD: 2,
+  LOW: 0.5
+};
+
+export class SecretWallSystem {
+  constructor(scene, interactionManager, hud) {
+    this.scene = scene;
+    this.interactionManager = interactionManager;
+    this.hud = hud;
+    this.secretObjects = [];
+    this.wallColliders = [];
+  }
+
+  spawnEasterEgg({ x, z, type }) {
+    const posX = x * tileSize;
+    const posZ = z * tileSize;
+    let createdMesh = null;
+
+    switch (type) {
+      case 'pass_through':
+        createdMesh = this._createPassThroughWall(posX, posZ);
+        break;
+      case 'breakable':
+        createdMesh = this._createBreakableWall(posX, posZ);
+        break;
+      case 'low_wall':
+        createdMesh = this._createLowWall(posX, posZ);
+        break;
+      case 'quicksand':
+        this._createQuicksand(posX, posZ);
+        break;
+    }
+
+    return createdMesh;
+  }
+
+  _createPassThroughWall(x, z) {
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(tileSize, tileSize * WALL_HEIGHTS.STANDARD, tileSize),
+      new THREE.MeshStandardMaterial({
+        color: WALL_COLORS.PASS_THROUGH,
+        transparent: true,
+        opacity: 0.98
+      })
+    );
+    wall.position.set(x, tileSize, z);
+    wall.userData.passThrough = true;
+    this.scene.add(wall);
+    return wall;
+  }
+
+  _createBreakableWall(x, z) {
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(tileSize, tileSize * WALL_HEIGHTS.STANDARD, tileSize),
+      new THREE.MeshStandardMaterial({ color: WALL_COLORS.BREAKABLE })
+    );
+    wall.position.set(x, tileSize, z);
+    wall.userData = {
+      breakable: true,
+      isObstacle: true
+    };
+    this.scene.add(wall);
+    this.secretObjects.push(wall);
+    return wall;
+  }
+
+  _createLowWall(x, z) {
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(tileSize, tileSize * WALL_HEIGHTS.LOW, tileSize),
+      new THREE.MeshStandardMaterial({ color: WALL_COLORS.LOW_WALL })
+    );
+    wall.position.set(x, tileSize * 0.25, z);
+    wall.userData.isObstacle = true;
+    this.scene.add(wall);
+    this.secretObjects.push(wall);
+    return wall;
+  }
+
+  _createQuicksand(x, z) {
+    // Visual representation
+    const visual = new THREE.Mesh(
+      new THREE.CylinderGeometry(tileSize * 0.4, tileSize * 0.5, 0.2, 32),
+      new THREE.MeshStandardMaterial({
+        color: WALL_COLORS.QUICKSAND.BASE,
+        transparent: true,
+        opacity: 0.8,
+        roughness: 1,
+        metalness: 0,
+        emissive: new THREE.Color(WALL_COLORS.QUICKSAND.EMISSIVE),
+        emissiveIntensity: 0.1
+      })
+    );
+    visual.position.set(x, 0, z);
+    this.scene.add(visual);
+
+    // Invisible trigger
+    const trigger = new THREE.Mesh(
+      new THREE.BoxGeometry(tileSize, 2, tileSize),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    trigger.position.set(x, 1, z);
+    trigger.userData.isQuicksand = true;
+    this.scene.add(trigger);
+    this.secretObjects.push(trigger);
+  }
+
+  tryBreakWall(wall, canBreak) {
+    if (!wall?.userData?.breakable) return false;
+
+    if (canBreak) {
+      this._destroyWall(wall);
+      this.hud?.showMessage("Wall shattered!");
+      return true;
+    } else {
+      this.hud?.showMessage("You need the Strength rune to break this wall!");
+      return false;
+    }
+  }
+
+  _destroyWall(wall) {
+    // Remove from all systems
+    this.interactionManager?.removeInteractable(wall);
+    this._removeFromColliders(wall);
+    this._removeFromSecretObjects(wall);
+    this._cleanupSceneObjects(wall);
+    this._disposeResources(wall);
+  }
+
+  _removeFromColliders(wall) {
+    const index = this.wallColliders.findIndex(entry => entry.mesh === wall);
+    if (index !== -1) this.wallColliders.splice(index, 1);
+  }
+
+  _removeFromSecretObjects(wall) {
+    const index = this.secretObjects.indexOf(wall);
+    if (index !== -1) this.secretObjects.splice(index, 1);
+  }
+
+  _cleanupSceneObjects(wall) {
+    if (wall.parent === this.scene) {
+      this.scene.remove(wall);
+    }
+  }
+
+  _disposeResources(wall) {
+    wall.geometry?.dispose();
+    
+    if (wall.material) {
+      Array.isArray(wall.material) 
+        ? wall.material.forEach(m => m.dispose())
+        : wall.material.dispose();
+    }
+    
+    wall.userData = {};
+  }
+
+  handleSecretCollision(object, player) {
+    return this.tryBreakWall(object, player.canBreakWalls);
+  }
+
+  checkBreakableWallProximity(playerPosition, canBreakWalls) {
+    for (const wall of this.secretObjects) {
+      if (!wall.userData?.breakable) continue;
+
+      if (playerPosition.distanceTo(wall.position) < 3.4) {
+        this.tryBreakWall(wall, canBreakWalls);
+        return;
+      }
+    }
+  }
+}
+
+file: RuneManager.js
+import * as THREE from 'three';
+import { RuneTypes } from './RuneTypes.js';
+import { maze1 } from '../environment/maze/MazeLayout';
+
+const tileSize = maze1.tileSize;
+// Constants
+const RUNE_CONFIG = {
+  VISUAL: {
+    SIZE: 0.2,
+    SEGMENTS: 48,
+    INNER_SIZE: 0.05,
+    HOVER_AMPLITUDE: 0.05,
+    HOVER_SPEED: 2,
+    ROTATION_SPEED: 0.01,
+    GLOW_INTENSITY: 0.5,
+    GLOW_DISTANCE: 2
+  },
+  MATERIALS: {
+    ORB: {
+      color: 0xffffff,
+      roughness: 0,
+      metalness: 0,
+      transmission: 1.0,
+      thickness: 0.01,
+      ior: 1.1,
+      envMapIntensity: 1.0,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05,
+      iridescence: 1.0,
+      iridescenceIOR: 1.3
+    },
+    INNER: {
+      emissiveIntensity: 1.0,
+      roughness: 0.3,
+      metalness: 0.5
+    }
+  },
+  POSITION: {
+    Y_OFFSET: 0.5,
+    RANDOM_OFFSET: 2.5
+  }
+};
+
+export class RuneManager {
+  constructor(scene) {
+    this.scene = scene;
+    this.runes = [];
+    this.runePool = [];
+    this.globalTime = { value: 0 };
+    this.trapRuneKeys = this._initializeTrapRunes();
+    this._createSharedGeometries();
+  }
+
+  _initializeTrapRunes() {
+    return Object.keys(RuneTypes).filter(key => RuneTypes[key].isTrap);
+  }
+
+  _createSharedGeometries() {
+    this.orbGeometry = new THREE.SphereGeometry(
+      RUNE_CONFIG.VISUAL.SIZE, 
+      RUNE_CONFIG.VISUAL.SEGMENTS, 
+      RUNE_CONFIG.VISUAL.SEGMENTS
+    );
+    this.outlineGeometry = new THREE.SphereGeometry(
+      RUNE_CONFIG.VISUAL.SIZE * 1.025, 
+      RUNE_CONFIG.VISUAL.SEGMENTS + 16, 
+      RUNE_CONFIG.VISUAL.SEGMENTS + 16
+    );
+    this.innerGeometry = new THREE.IcosahedronGeometry(
+      RUNE_CONFIG.VISUAL.INNER_SIZE, 
+      0
+    );
+  }
+
+  getRandomTrapRuneName() {
+    return this.trapRuneKeys[
+      Math.floor(Math.random() * this.trapRuneKeys.length)
+    ];
+  }
+
+  createRune(baseName, position, forceTrap = false) {
+    const { visualName, effectName, isTrap } = 
+      this._determineRuneType(baseName, forceTrap);
+    
+    const visualData = RuneTypes[visualName];
+    const effectData = RuneTypes[effectName];
+    if (!visualData || !effectData){
+
+      return null;
+    } 
+
+    const orb = this._getOrCreateRuneMesh(visualData, position);
+    this._configureRuneData(orb, visualName, effectName, isTrap, position);
+    
+    this.scene.add(orb);
+    this.runes.push(orb);
+    return orb;
+  }
+
+  _determineRuneType(baseName, forceTrap) {
+    return {
+      visualName: baseName,
+      effectName: forceTrap ? this.getRandomTrapRuneName() : baseName,
+      isTrap: forceTrap
+    };
+  }
+
+  _getOrCreateRuneMesh(visualData, position) {
+    let orb = this.runePool.pop();
+    if (!orb) {
+      orb = this._createNewRuneMesh(visualData, position);
+    }
+    return orb;
+  }
+
+  _createNewRuneMesh(visualData, position) {
+    const orbMaterial = new THREE.MeshPhysicalMaterial({
+      ...RUNE_CONFIG.MATERIALS.ORB,
+      transparent: true,
+      side: THREE.FrontSide,
+      depthWrite: false
+    });
+
+    const orb = new THREE.Mesh(this.orbGeometry, orbMaterial);
+
+    const outlineMaterial = this._createOutlineMaterial(visualData.color);
+    const outline = new THREE.Mesh(this.outlineGeometry, outlineMaterial);
+    orb.add(outline);
+
+    const innerMaterial = new THREE.MeshStandardMaterial({
+      color: visualData.color,
+      emissive: visualData.color,
+      ...RUNE_CONFIG.MATERIALS.INNER
+    });
+
+    const inner = new THREE.Mesh(this.innerGeometry, innerMaterial);
+    orb.add(inner);
+
+    this._addGlowLight(orb, visualData.color, position);
+
+    orb.userData = {
+      innerMesh: inner,
+      outlineMaterial,
+      offset: Math.random() * Math.PI * 2
+    };
+
+    return orb;
+  }
+
+  _createOutlineMaterial(color) {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: this.globalTime,
+        uColor: { value: new THREE.Color(color) }
+      },
+      vertexShader: `
+        varying vec3 vNormal;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uTime;
+        varying vec3 vNormal;
+        void main() {
+          float intensity = pow(abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 0.8);
+          float pulse = 0.5 + 0.5 * sin(uTime * 2.0);
+          gl_FragColor = vec4(uColor * intensity * pulse, 0.15);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+  }
+
+  _addGlowLight(orb, color, position) {
+    const glowLight = new THREE.PointLight(
+      color,
+      RUNE_CONFIG.VISUAL.GLOW_INTENSITY,
+      RUNE_CONFIG.VISUAL.GLOW_DISTANCE
+    );
+    glowLight.position.set(position.x, position.y - 0.1, position.z);
+    this.scene.add(glowLight);
+    orb.userData.glowLight = glowLight;
+  }
+
+  _configureRuneData(orb, visualName, effectName, isTrap, position) {
+    orb.visible = true;
+    orb.name = effectName;
+    orb.position.copy(position);
+    
+    Object.assign(orb.userData = {
+      ...orb.userData,
+      objectType: 'rune',
+      label: RuneTypes[visualName].label,
+      isTrap,
+      displayName: visualName
+    });
+  }
+
+  update(time) {
+    const t = time / 1000;
+    this.globalTime.value = t;
+
+    for (const rune of this.runes) {
+      if (!rune.userData) continue;
+      
+      const offsetT = t + rune.userData.offset;
+      this._updateRunePosition(rune, offsetT);
+      this._updateRuneRotation(rune);
+      this._updateRuneEmissive(rune, offsetT);
+      
+    }
+
+  }
+
+  _updateRunePosition(rune, time) {
+    rune.position.y = RUNE_CONFIG.POSITION.Y_OFFSET + 
+      Math.sin(time * RUNE_CONFIG.VISUAL.HOVER_SPEED) * 
+      RUNE_CONFIG.VISUAL.HOVER_AMPLITUDE;
+  }
+
+  _updateRuneRotation(rune) {
+    rune.rotation.y += RUNE_CONFIG.VISUAL.ROTATION_SPEED;
+  }
+
+  _updateRuneEmissive(rune, time) {
+    const inner = rune.userData.innerMesh;
+    if (inner?.material) {
+      inner.material.emissiveIntensity = 0.5 + 
+        (Math.sin(time * RUNE_CONFIG.VISUAL.HOVER_SPEED) * 0.5 + 0.5);
+    }
+  }
+
+  spawnFromMap(mazeMap) {
+    mazeMap.objects.runes.forEach(({ x, z, type, isTrap }) => {
+      const position = this._calculateRunePosition(x, z);
+      this.createRune(type, position, isTrap);
+    });
+  }
+
+  _calculateRunePosition(x, z) {
+    const offsetDirection = Math.random() < 0.5 ? -1 : 1;
+    const offset = tileSize / (offsetDirection * RUNE_CONFIG.POSITION.RANDOM_OFFSET);
+    
+    return new THREE.Vector3(
+      x * tileSize + offset,
+      RUNE_CONFIG.POSITION.Y_OFFSET,
+      z * tileSize + offset
+    );
+  }
+
+  getRunes() {
+    return this.runes;
+  }
+
+  getRuneFromObject(object) {
+    return this.runes.find(rune => rune === object || rune.uuid === object.uuid) || null;
+  }
+
+  removeRune(rune) {
+    if (!rune) return;
+
+    if (rune.userData.glowLight) {
+      this.scene.remove(rune.userData.glowLight);
+    }
+
+    rune.visible = false;
+    this.scene.remove(rune);
+    this.runes = this.runes.filter(r => r !== rune);
+    this.runePool.push(rune);
+  }
+
+  isRuneTrap(runeName) {
+    return !!RuneTypes[runeName]?.isTrap;
+  }
+
+  dispose() {
+    this.orbGeometry.dispose();
+    this.outlineGeometry.dispose();
+    this.innerGeometry.dispose();
+
+    this.runes.forEach(rune => {
+      if (rune.material) rune.material.dispose();
+      if (rune.userData?.outlineMaterial) rune.userData.outlineMaterial.dispose();
+      if (rune.userData?.innerMesh?.material) {
+        rune.userData.innerMesh.material.dispose();
+      }
+    });
+
+    this.runePool.forEach(rune => {
+      if (rune.material) rune.material.dispose();
+      if (rune.userData?.outlineMaterial) rune.userData.outlineMaterial.dispose();
+      if (rune.userData?.innerMesh?.material) {
+        rune.userData.innerMesh.material.dispose();
+      }
+    });
+  }
+}
+
+file: RuneTypes.js
+// src/runes/RuneTypes.js
+
+/**
+ * Norse Rune Configuration System
+ * - Organized by positive/trap categories
+ * - Enhanced type safety
+ * - Better visual hierarchy
+ * - Optimized for UI rendering
+ */
+
+export const RUNE_CATEGORIES = {
+  POSITIVE: 'positive',
+  TRAP: 'trap'
+};
+
+export const RuneTypes = Object.freeze({
+  // ===== Positive Runes =====
+  FLIGHT: {
+    id: 'rune_flight',
+    label: "Valkyrie's Wings",
+    icon: "ᛉ",
+    color: "#9b59b6",
+    description: "Fly over gaps and obstacles for some time.",
+    category: RUNE_CATEGORIES.POSITIVE,
+    visualEffects: ['particles', 'glow']
+  },
+
+  BLINK: {
+    id: 'rune_blink',
+    label: "Bifrost Step",
+    icon: "ᚱ",
+    color: "#00bfff",
+    description: "Teleport instantly to any visible location.",
+    category: RUNE_CATEGORIES.POSITIVE,
+    visualEffects: ['shimmer', 'lightning']
+  },
+
+  STRENGTH: {
+    id: 'rune_strength',
+    label: "Thor's Might",
+    icon: "ᚢ",
+    color: "#e53935",
+    description: "Destroy weak walls and breakable objects with one hit.",
+    category: RUNE_CATEGORIES.POSITIVE,
+    visualEffects: ['pulse', 'impact']
+  },
+
+  SPEED: {
+    id: 'rune_speed',
+    label: "Sleipnir's Gallop",
+    icon: "ᛋ",
+    color: "#ffd700",
+    description: "Move at incredible speed for some time.",
+    category: RUNE_CATEGORIES.POSITIVE,
+    visualEffects: ['trail', 'speedLines']
+  },
+
+  VISION: {
+    id: 'rune_vision',
+    label: "Heimdall's Sight",
+    icon: "ᚨ",
+    color: "#2ecc71",
+    description: "Reveal hidden traps and secrets temporarily.",
+    category: RUNE_CATEGORIES.POSITIVE,
+    visualEffects: ['aura', 'scan']
+  },
+
+  // ===== Trap Runes =====
+  CONFUSION: {
+    id: 'rune_confusion',
+    label: "Hymir's Hangover",
+    icon: "ᛈ",
+    color: "#ff7043",
+    description: "TRAP: Inverts your movement controls for some time.",
+    category: RUNE_CATEGORIES.TRAP,
+    visualEffects: ['distortion'],
+    isTrap: true
+  },
+
+  PATHBLOCK: {
+    id: 'rune_pathblock',
+    label: "Loki's Mirage",
+    icon: "ᛁ",
+    color: "#b3e5fc",
+    description: "TRAP: Blocks vision of your path (movement unaffected).",
+    category: RUNE_CATEGORIES.TRAP,
+    visualEffects: ['fog'],
+    isTrap: true
+  },
+
+  SILENCE: {
+    id: 'rune_silence',
+    label: "Hel's Shroud",
+    icon: "ᚺ",
+    color: "#607d8b",
+    description: "TRAP: Disables all sound and UI temporarily.",
+    category: RUNE_CATEGORIES.TRAP,
+    visualEffects: ['mute'],
+    isTrap: true
+  },
+
+  GRAVITY: {
+    id: 'rune_gravity',
+    label: "Jormungandr's Grasp",
+    icon: "ᚦ",
+    color: "#6a1b9a",
+    description: "TRAP: Completely stops your movement for some time.",
+    category: RUNE_CATEGORIES.TRAP,
+    visualEffects: ['weight'],
+    isTrap: true
+  },
+
+  VOID: {
+    id: 'rune_void',
+    label: "Fenrir's Shadow",
+    icon: "ᚾ",
+    color: "#000000",
+    description: "TRAP: Hides all visuals temporarily.",
+    category: RUNE_CATEGORIES.TRAP,
+    visualEffects: ['darkness'],
+    isTrap: true
+  }
+});
+
+// Utility Functions
+export const getRuneById = (id) => 
+  Object.values(RuneTypes).find(rune => rune.id === id);
+
+export const getRunesByCategory = (category) => 
+  Object.values(RuneTypes).filter(rune => rune.category === category);
+
+export const isTrapRune = (rune) => 
+  rune?.category === RUNE_CATEGORIES.TRAP;
+
+// Color Palette Constants
+export const RUNE_COLORS = Object.freeze({
+  POSITIVE: "#2ecc71",
+  TRAP: "#e74c3c",
+  DEFAULT: "#ecf0f1"
+});
+
+file: RunEffects.js
+import * as THREE from 'three';
+import { AnimationSystem } from '../../../core/utils/animation.js';
+
+// Constants
+const EFFECT_DURATIONS = {
+  FLIGHT: {
+    BOUNCE: 0.3,
+    ASCENT: 0.7,
+    SUSPEND: 3,
+    DESCENT: 1
+  },
+  BLINK: {
+    TELEPORT: 0.15,
+    COOLDOWN: 0.15
+  },
+  STRENGTH: 5000,
+  SPEED: 4000,
+  VISION: 5000
+};
+
+const VISUAL_CONFIG = {
+  FLIGHT_HEIGHT: 3,
+  BOUNCE_HEIGHT: 0.3,
+  BLINK_DISTANCE: 5,
+  BLINK_BUFFER: 0.5,
+  MIN_FLOOR_HEIGHT: 1
+};
+
+// Shared easing functions
+const Easing = {
+  bounce: t => {
+    const n1 = 7.5625, d1 = 2.75;
+    if (t < 1 / d1) return n1 * t * t;
+    if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
+    if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
+    return n1 * (t -= 2.625 / d1) * t + 0.984375;
+  },
+  quad: t => t * (2 - t),
+  linear: t => t
+};
+
+export class RuneEffects {
+  static rune_flight(player, scene, hud) {
+    const camera = player.controls.object;
+    const originalY = camera.position.y;
+    
+    // Bounce phase
+    AnimationSystem({
+      duration: EFFECT_DURATIONS.FLIGHT.BOUNCE,
+      from: originalY,
+      to: originalY + VISUAL_CONFIG.BOUNCE_HEIGHT,
+      ease: Easing.bounce,
+      onUpdate: y => camera.position.y = y,
+      onComplete: () => this._ascendFlight(camera, originalY, hud)
+    });
+    
+    hud?.showMessage("You prepare to float...");
+  }
+
+  static _ascendFlight(camera, originalY, hud) {
+    AnimationSystem({
+      duration: EFFECT_DURATIONS.FLIGHT.ASCENT,
+      from: camera.position.y,
+      to: originalY + VISUAL_CONFIG.FLIGHT_HEIGHT,
+      ease: Easing.quad,
+      onUpdate: y => camera.position.y = y,
+      onComplete: () => {
+        hud?.showMessage("You float above the ground...");
+        setTimeout(() => this._descendFlight(camera, originalY, hud), 
+          EFFECT_DURATIONS.FLIGHT.SUSPEND * 1000);
+      }
+    });
+  }
+
+  static _descendFlight(camera, originalY, hud) {
+    AnimationSystem({
+      duration: EFFECT_DURATIONS.FLIGHT.DESCENT,
+      from: camera.position.y,
+      to: originalY,
+      ease: Easing.quad,
+      onUpdate: y => camera.position.y = y,
+      onComplete: () => hud?.showMessage("Flight fades.")
+    });
+  }
+
+  static rune_blink(player, scene, hud) {
+    const obj = player.controls.object;
+    const direction = new THREE.Vector3();
+    player.controls.getDirection(direction).normalize();
+
+    const raycaster = new THREE.Raycaster(obj.position.clone(), direction);
+    const obstacles = this._getObstacles(scene);
+    const intersections = raycaster.intersectObjects(obstacles, true);
+    
+    const blinkDistance = this._calculateBlinkDistance(intersections);
+    if (blinkDistance <= 0) {
+      hud?.showMessage("Blink blocked! Too close to obstacle.");
+      return;
+    }
+
+    const newPos = this._calculateBlinkPosition(obj, direction, blinkDistance);
+    this._animateBlink(obj, newPos, hud);
+  }
+
+  static _getObstacles(scene) {
+    const obstacles = [];
+    scene.traverse(child => {
+      if (child.userData?.isObstacle) obstacles.push(child);
+    });
+    return obstacles;
+  }
+
+  static _calculateBlinkDistance(intersections) {
+    if (intersections.length === 0) return VISUAL_CONFIG.BLINK_DISTANCE;
+    return Math.max(0, intersections[0].distance - VISUAL_CONFIG.BLINK_BUFFER);
+  }
+
+  static _calculateBlinkPosition(obj, direction, distance) {
+    const newPos = obj.position.clone()
+      .add(direction.multiplyScalar(distance));
+    newPos.y = Math.max(newPos.y, VISUAL_CONFIG.MIN_FLOOR_HEIGHT);
+    return newPos;
+  }
+
+  static _animateBlink(obj, newPos, hud) {
+    // Scale down
+    AnimationSystem({
+      duration: EFFECT_DURATIONS.BLINK.TELEPORT,
+      from: 1,
+      to: 0.1,
+      ease: Easing.linear,
+      onUpdate: scale => obj.scale.setScalar(scale),
+      onComplete: () => {
+        obj.position.copy(newPos);
+        // Scale up
+        AnimationSystem({
+          duration: EFFECT_DURATIONS.BLINK.COOLDOWN,
+          from: 0.1,
+          to: 1,
+          ease: Easing.linear,
+          onUpdate: scale => obj.scale.setScalar(scale),
+          onComplete: () => hud?.showMessage("You blink forward through space.")
+        });
+      }
+    });
+  }
+
+  static rune_strength(player, scene, hud) {
+    player.canBreakWalls = true;
+    hud?.showMessage("You feel powerful... walls can be broken!");
+    
+    setTimeout(() => {
+      player.canBreakWalls = false;
+      hud?.showMessage("Your strength fades.");
+    }, EFFECT_DURATIONS.STRENGTH);
+  }
+
+  static rune_speed(player, scene, hud) {
+    const originalSpeed = player.getMovementSpeed();
+    player.setMovementSpeed(originalSpeed * 2);
+    hud?.showMessage("You feel a burst of speed!");
+    
+    setTimeout(() => {
+      player.setMovementSpeed(originalSpeed);
+      hud?.showMessage("Speed fades.");
+    }, EFFECT_DURATIONS.SPEED);
+  }
+
+  static rune_vision(player, scene, hud) {
+    const overlay = this._createVisionOverlay();
+    document.body.appendChild(overlay);
+
+    const originalMaterials = this._applyXrayMaterials(scene);
+    this._animateVisionOverlay(overlay, hud);
+
+    setTimeout(() => {
+      this._restoreMaterials(scene, originalMaterials);
+      document.body.removeChild(overlay);
+      hud?.showMessage("The vision fades...");
+    }, EFFECT_DURATIONS.VISION);
+  }
+
+  static _createVisionOverlay() {
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      width: '100vw',
+      height: '100vh',
+      pointerEvents: 'none',
+      background: 'radial-gradient(circle, rgba(255,255,255,0.25) 0%, transparent 80%)',
+      opacity: '0',
+      zIndex: '9999',
+      mixBlendMode: 'screen',
+      transition: 'background-size 0.5s ease'
+    });
+    return overlay;
+  }
+
+  static _applyXrayMaterials(scene) {
+    const originalMaterials = new Map();
+    const highlightColors = {
+      treasure: 0xffff00,
+      exit: 0x42a5f5,
+      obstacle: 0x999999
+    };
+
+    scene.traverse(obj => {
+      if (obj.userData?.isTreasure) {
+        this._replaceMaterial(obj, highlightColors.treasure, originalMaterials);
+      } else if (obj.name === "exit_door") {
+        this._replaceMaterial(obj, highlightColors.exit, originalMaterials);
+      } else if (obj.userData?.breakable || obj.userData?.passThrough) {
+        this._replaceMaterial(obj, highlightColors.obstacle, originalMaterials);
+      }
+    });
+
+    return originalMaterials;
+  }
+
+  static _replaceMaterial(obj, color, materialMap) {
+    if (!obj.material) return;
+    materialMap.set(obj, obj.material);
+    obj.material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.4,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+  }
+
+  static _animateVisionOverlay(overlay, hud) {
+    hud?.showMessage("Your eyes glow with insight...");
+    
+    AnimationSystem({
+      duration: 0.5,
+      from: 0,
+      to: 1,
+      onUpdate: val => {
+        overlay.style.opacity = val;
+        const size = 100 + val * 50;
+        overlay.style.backgroundSize = `${size}% ${size}%`;
+      }
+    });
+  }
+
+  static _restoreMaterials(scene, originalMaterials) {
+    originalMaterials.forEach((material, obj) => {
+      if (obj.material?.dispose) obj.material.dispose();
+      obj.material = material;
+    });
+  }
+}
+
+file: FakeRuneEffects.js
+import { createTween, addAnimation, removeAnimation } from '../core/animation.js';
+
+// Constants
+const EFFECT_DURATIONS = {
+  CONFUSION: 10,
+  PATHBLOCK: 10,
+  SILENCE: 10,
+  GRAVITY: 5,
+  VOID: 7
+};
+
+const VISUAL_CONFIG = {
+  BLUR: {
+    MAX: 5,
+    DURATION: 0.5
+  },
+  SHAKE: {
+    INTENSITY: 0.05,
+    SPEED: 40,
+    FADE: true
+  },
+  WALL: {
+    SLIDE_DISTANCE: 5,
+    SHIMMER_SPEED: 20,
+    SHIMMER_INTENSITY: 0.5
+  },
+  GRAVITY: {
+    BOUNCE_HEIGHT: 0.5,
+    SLAM_DURATION: 0.3,
+    SHAKE_INTENSITY: 0.05
+  },
+  VOID: {
+    OPACITY: 0.95,
+    PULSE_SPEED: 8,
+    PULSE_RANGE: 0.1
+  }
+};
+
+export class FakeRuneEffects {
+  static rune_confusion(player, gameState, hud) {
+    hud?.showMessage("Your thoughts scramble... Controls reversed!");
+    player.invertControls(EFFECT_DURATIONS.CONFUSION);
+
+    this._applyBlurEffect();
+    this._applyCameraShake(player, EFFECT_DURATIONS.CONFUSION);
+
+    player.applyEffectDuration("confusion", EFFECT_DURATIONS.CONFUSION, () => {
+      gameState.equippedRune = null;
+      hud?.updateRuneDisplay(null);
+    });
+  }
+
+  static rune_pathblock(player, gameState, hud, maze) {
+    hud?.showMessage("The walls shift... A path is blocked.");
+
+    const wallsToBlock = maze.getWallsToBlock?.() || [];
+    wallsToBlock.forEach(wall => this._animateBlockingWall(wall));
+
+    maze.blockAllPaths(EFFECT_DURATIONS.PATHBLOCK);
+
+    player.applyEffectDuration("pathblock", EFFECT_DURATIONS.PATHBLOCK, () => {
+      this._resetBlockingWalls(wallsToBlock);
+      gameState.equippedRune = null;
+      hud?.updateRuneDisplay(null);
+    });
+  }
+
+  static rune_silence(player, gameState, hud, uiManager) {
+    this._fadeOutUI(hud);
+    // uiManager?.disableAudio();
+
+    player.applyEffectDuration("silence", EFFECT_DURATIONS.SILENCE, () => {
+      this._fadeInUI(hud);
+      // uiManager?.enableAudio();
+      hud?.showMessage("Silence fades...");
+      gameState.equippedRune = null;
+      hud?.updateRuneDisplay(null);
+    });
+  }
+
+  static rune_gravity(player, gameState, hud) {
+    hud?.showMessage("A heavy force slams you to the ground!");
+    this._applyGravityEffect(player);
+    player.stunMovement(EFFECT_DURATIONS.GRAVITY);
+
+    player.applyEffectDuration("gravity_stun", EFFECT_DURATIONS.GRAVITY, () => {
+      gameState.equippedRune = null;
+      hud?.updateRuneDisplay(null);
+    });
+  }
+
+  static rune_void(player, gameState, hud, scene) {
+    hud?.showMessage("A void swallows your vision!");
+    const affectedMeshes = this._hideSceneObjects(scene);
+    this._applyVoidEffect(player);
+
+    player.applyEffectDuration("vision_blind", EFFECT_DURATIONS.VOID, () => {
+      this._restoreSceneObjects(affectedMeshes);
+      this._removeVoidEffect(player);
+      hud?.showMessage("Your vision returns.");
+      gameState.equippedRune = null;
+      hud?.updateRuneDisplay(null);
+    });
+  }
+
+  // ===== Helper Methods =====
+  static _applyBlurEffect() {
+    const blurOverlay = document.getElementById('blur-overlay');
+    if (!blurOverlay) return;
+
+    createTween({
+      duration: VISUAL_CONFIG.BLUR.DURATION,
+      from: 0,
+      to: VISUAL_CONFIG.BLUR.MAX,
+      onUpdate: val => {
+        blurOverlay.style.backdropFilter = `blur(${val}px)`;
+      }
+    });
+  }
+
+  static _applyCameraShake(player, duration) {
+    const cam = player.controls.object;
+    const originalPos = cam.position.clone();
+    let elapsed = 0;
+
+    const shake = (delta) => {
+      elapsed += delta;
+      if (elapsed > duration) {
+        removeAnimation(shake);
+        cam.position.copy(originalPos);
+        this._removeBlurEffect();
+        return;
+      }
+
+      const intensity = VISUAL_CONFIG.SHAKE.FADE 
+        ? VISUAL_CONFIG.SHAKE.INTENSITY * (1 - elapsed / duration) 
+        : VISUAL_CONFIG.SHAKE.INTENSITY;
+
+      cam.position.set(
+        originalPos.x + (Math.sin(elapsed * VISUAL_CONFIG.SHAKE.SPEED) * intensity),
+        originalPos.y + (Math.cos(elapsed * VISUAL_CONFIG.SHAKE.SPEED * 0.875) * intensity),
+        originalPos.z + (Math.sin(elapsed * VISUAL_CONFIG.SHAKE.SPEED * 1.25) * intensity)
+      );
+    };
+
+    addAnimation(shake);
+  }
+
+  static _removeBlurEffect() {
+    const blurOverlay = document.getElementById('blur-overlay');
+    if (!blurOverlay) return;
+
+    createTween({
+      duration: VISUAL_CONFIG.BLUR.DURATION,
+      from: parseFloat(blurOverlay.style.backdropFilter?.match(/\d+/)?.[0]) || VISUAL_CONFIG.BLUR.MAX,
+      to: 0,
+      onUpdate: val => {
+        blurOverlay.style.backdropFilter = `blur(${val}px)`;
+      }
+    });
+  }
+
+  static _animateBlockingWall(wall) {
+    wall.userData.isBlocked = true;
+    const originalY = wall.position.y;
+    wall.position.y = originalY - VISUAL_CONFIG.WALL.SLIDE_DISTANCE;
+
+    createTween({
+      duration: 1,
+      from: wall.position.y,
+      to: originalY,
+      onUpdate: val => wall.position.y = val
+    });
+
+    if (wall.material) {
+      let elapsed = 0;
+      const shimmer = (delta) => {
+        elapsed += delta;
+        wall.material.emissiveIntensity = 
+          VISUAL_CONFIG.WALL.SHIMMER_INTENSITY + 
+          VISUAL_CONFIG.WALL.SHIMMER_INTENSITY * Math.sin(elapsed * VISUAL_CONFIG.WALL.SHIMMER_SPEED);
+      };
+      addAnimation(shimmer);
+      wall.userData.shimmerAnim = shimmer;
+    }
+  }
+
+  static _resetBlockingWalls(walls) {
+    walls.forEach(wall => {
+      createTween({
+        duration: 1,
+        from: wall.position.y,
+        to: wall.position.y - VISUAL_CONFIG.WALL.SLIDE_DISTANCE,
+        onUpdate: val => wall.position.y = val,
+        onComplete: () => {
+          wall.userData.isBlocked = false;
+          if (wall.userData.shimmerAnim) {
+            removeAnimation(wall.userData.shimmerAnim);
+            wall.material.emissiveIntensity = 0;
+          }
+        }
+      });
+    });
+  }
+
+  static _fadeOutUI(hud) {
+    if (!hud?.el) return;
+    hud.el.style.transition = 'opacity 0.5s ease';
+    hud.el.style.opacity = '0';
+  }
+
+  static _fadeInUI(hud) {
+    if (!hud?.el) return;
+    hud.el.style.opacity = '1';
+  }
+
+  static _applyGravityEffect(player) {
+    const cam = player.controls.object;
+    const originalPos = cam.position.clone();
+    let elapsed = 0;
+    let phase = 0;
+
+    const slamAnim = (delta) => {
+      elapsed += delta;
+      
+      if (phase === 0) {
+        const t = Math.min(elapsed / VISUAL_CONFIG.GRAVITY.SLAM_DURATION, 1);
+        cam.position.y = originalPos.y - VISUAL_CONFIG.GRAVITY.BOUNCE_HEIGHT * t;
+        if (t === 1) {
+          phase = 1;
+          elapsed = 0;
+        }
+      } else if (phase === 1) {
+        const t = Math.min(elapsed / VISUAL_CONFIG.GRAVITY.SLAM_DURATION, 1);
+        cam.position.y = originalPos.y - VISUAL_CONFIG.GRAVITY.BOUNCE_HEIGHT + 
+                         VISUAL_CONFIG.GRAVITY.BOUNCE_HEIGHT * t;
+        if (t === 1) {
+          phase = 2;
+          elapsed = 0;
+        }
+      } else if (elapsed <= 1) {
+        cam.position.set(
+          originalPos.x + (Math.random() * 2 - 1) * VISUAL_CONFIG.GRAVITY.SHAKE_INTENSITY,
+          originalPos.y,
+          originalPos.z + (Math.random() * 2 - 1) * VISUAL_CONFIG.GRAVITY.SHAKE_INTENSITY
+        );
+      } else {
+        cam.position.copy(originalPos);
+        removeAnimation(slamAnim);
+      }
+    };
+
+    addAnimation(slamAnim);
+  }
+
+  static _hideSceneObjects(scene) {
+    const affectedMeshes = [];
+    scene.traverse(obj => {
+      if (obj.isMesh && obj.visible && !obj.userData.isFakeWall) {
+        obj.visible = false;
+        affectedMeshes.push(obj);
+      }
+    });
+    return affectedMeshes;
+  }
+
+  static _applyVoidEffect(player) {
+    const overlay = document.getElementById('vision-overlay');
+    if (!overlay) return;
+
+    overlay.style.opacity = '0';
+    createTween({
+      duration: 0.5,
+      from: 0,
+      to: VISUAL_CONFIG.VOID.OPACITY,
+      onUpdate: val => (overlay.style.opacity = val)
+    });
+
+    let pulseElapsed = 0;
+    const pulseAnim = (delta) => {
+      pulseElapsed += delta;
+      const pulse = VISUAL_CONFIG.VOID.OPACITY - 
+                   VISUAL_CONFIG.VOID.PULSE_RANGE * 0.5 + 
+                   VISUAL_CONFIG.VOID.PULSE_RANGE * Math.sin(pulseElapsed * VISUAL_CONFIG.VOID.PULSE_SPEED);
+      overlay.style.opacity = pulse;
+    };
+    addAnimation(pulseAnim);
+    player.userData._voidPulseAnim = pulseAnim;
+  }
+
+  static _restoreSceneObjects(meshes) {
+    meshes.forEach(obj => (obj.visible = true));
+  }
+
+  static _removeVoidEffect(player) {
+    const overlay = document.getElementById('vision-overlay');
+    if (!overlay) return;
+
+    createTween({
+      duration: 0.5,
+      from: parseFloat(overlay.style.opacity) || VISUAL_CONFIG.VOID.OPACITY,
+      to: 0,
+      onUpdate: val => (overlay.style.opacity = val),
+      onComplete: () => {
+        if (player.userData._voidPulseAnim) {
+          removeAnimation(player.userData._voidPulseAnim);
+          delete player.userData._voidPulseAnim;
+        }
+      }
+    });
+  }
+}
+
+file: TreasureManager.js
+import * as THREE from 'three';
+import { gameState } from '../../core/gameState.js';
+
+// Constants
+const TREASURE_CONFIG = {
+  SIZE: 0.3,
+  GLOW_LIGHT: {
+    COLOR: 0xffd700,
+    INTENSITY: 0.5,
+    DISTANCE: 2,
+    HEIGHT: 0.9
+  },
+  SHELL_MATERIAL: {
+    COLOR: 0xffffff,
+    ROUGHNESS: 0,
+    METALNESS: 0,
+    TRANSMISSION: 1.0,
+    THICKNESS: 0.01,
+    IOR: 1.1,
+    CLEARCOAT: 1.0,
+    CLEARCOAT_ROUGHNESS: 0.05,
+    IRIDESCENCE: 1.0,
+    IRIDESCENCE_IOR: 1.3
+  },
+  CORE_MATERIAL: {
+    COLOR: 0xffd700,
+    EMISSIVE: 0xffd700,
+    EMISSIVE_INTENSITY: 1.0,
+    ROUGHNESS: 0.3,
+    METALNESS: 0.5
+  },
+  CORE_GEOMETRY: new THREE.IcosahedronGeometry(0.05, 0),
+  POSITION_OFFSET: 2.4
+};
+
+export class TreasureManager {
+  constructor(scene, hud) {
+    this.scene = scene;
+    this.hud = hud;
+    this.treasures = [];
+    this._initializeGameState();
+    this._createMaterials();
+  }
+
+  _initializeGameState() {
+    gameState.totalTreasures = 0;
+    gameState.treasuresCollected = 0;
+  }
+
+  _createMaterials() {
+    this.shellMaterial = new THREE.MeshPhysicalMaterial({
+      ...TREASURE_CONFIG.SHELL_MATERIAL,
+      transparent: true,
+      side: THREE.FrontSide,
+      depthWrite: false
+    });
+
+    this.coreMaterial = new THREE.MeshStandardMaterial({
+      ...TREASURE_CONFIG.CORE_MATERIAL
+    });
+  }
+
+  spawnFromMap(mazeMap) {
+    mazeMap.objects.treasures.forEach(({ x, z }) => {
+      const { position, treasure } = this._createTreasure(x, z);
+      this._addGlowLight(position);
+      this._addToScene(treasure);
+    });
+
+    gameState.totalTreasures = this.treasures.length;
+  }
+
+  _createTreasure(x, z) {
+    const position = this._calculatePosition(x, z);
+    const treasure = this._buildTreasureMesh(position);
+    return { position, treasure };
+  }
+
+  _calculatePosition(x, z) {
+    const rl = Math.random() < 0.5 ? -1 : 1;
+    const lr = Math.random() < 0.5 ? -1 : 1;
+    return {
+      x: x * tileSize + tileSize / (rl * TREASURE_CONFIG.POSITION_OFFSET),
+      z: z * tileSize + tileSize / (lr * TREASURE_CONFIG.POSITION_OFFSET)
+    };
+  }
+
+  _buildTreasureMesh(position) {
+    const treasure = new THREE.Mesh(
+      new THREE.BoxGeometry(TREASURE_CONFIG.SIZE, TREASURE_CONFIG.SIZE, TREASURE_CONFIG.SIZE),
+      this.shellMaterial
+    );
+
+    treasure.name = 'treasure';
+    treasure.position.set(position.x, 0.5, position.z);
+    treasure.castShadow = true;
+    treasure.receiveShadow = true;
+    treasure.userData.isTreasure = true;
+
+    const core = new THREE.Mesh(
+      TREASURE_CONFIG.CORE_GEOMETRY,
+      this.coreMaterial
+    );
+    treasure.add(core);
+
+    return treasure;
+  }
+
+  _addGlowLight(position) {
+    const glowLight = new THREE.PointLight(
+      TREASURE_CONFIG.GLOW_LIGHT.COLOR,
+      TREASURE_CONFIG.GLOW_LIGHT.INTENSITY,
+      TREASURE_CONFIG.GLOW_LIGHT.DISTANCE
+    );
+    glowLight.position.set(
+      position.x,
+      TREASURE_CONFIG.GLOW_LIGHT.HEIGHT,
+      position.z
+    );
+    this.scene.add(glowLight);
+    return glowLight;
+  }
+
+  _addToScene(treasure) {
+    this.scene.add(treasure);
+    this.treasures.push(treasure);
+  }
+
+  collect(treasure) {
+    this._cleanupTreasure(treasure);
+    this._updateGameState();
+    this._showCollectionMessage();
+    this._checkAllCollected();
+  }
+
+  _cleanupTreasure(treasure) {
+    if (treasure.userData.glowLight) {
+      this.scene.remove(treasure.userData.glowLight);
+    }
+    this.scene.remove(treasure);
+    this.treasures = this.treasures.filter(t => t !== treasure);
+  }
+
+  _updateGameState() {
+    gameState.treasuresCollected += 1;
+  }
+
+  _showCollectionMessage() {
+    this.hud?.showMessage(
+      `Treasure found! (${gameState.treasuresCollected}/${gameState.totalTreasures})`
+    );
+  }
+
+  _checkAllCollected() {
+    if (gameState.treasuresCollected === gameState.totalTreasures) {
+      this.hud?.showMessage("All treasures collected! Activate the exit!");
+    }
+  }
+
+  getTreasures() {
+    return this.treasures;
+  }
+
+  dispose() {
+    this.shellMaterial.dispose();
+    this.coreMaterial.dispose();
+    TREASURE_CONFIG.CORE_GEOMETRY.dispose();
+  }
+}
+
+file: ExitDoor.js
+import * as THREE from 'three';
+
+// Constants
+const DOOR_CONFIG = {
+  SIZE: {
+    WIDTH: 2,
+    HEIGHT: 3,
+    DEPTH: 0.3
+  },
+  COLORS: {
+    LOCKED: 0xffffff,
+    UNLOCKED: 0x66ccff,
+    FRAME: 0x1c1f22
+  },
+  MATERIALS: {
+    LOCKED: {
+      OPACITY: 0.35,
+      EMISSIVE: 0x222222,
+      EMISSIVE_INTENSITY: 0.15
+    },
+    UNLOCKED: {
+      OPACITY: 1.0,
+      EMISSIVE: 0x66ccff,
+      EMISSIVE_INTENSITY: 0.6
+    }
+  },
+  FRAME: {
+    THICKNESS: 0.25,
+    DEPTH: 0.5
+  },
+  INTERACTION: {
+    WIDTH: 1.8,
+    HEIGHT: 3.8,
+    DEPTH: 0.2
+  }
+};
+
+export class ExitDoor {
+  constructor(scene, position) {
+    this.scene = scene;
+    this.locked = true;
+    this.position = position.clone();
+    this.position.z += 0.01; // Prevent z-fighting
+
+    this._initMaterials();
+    this._createDoor();
+    this._createFrame();
+    this._createInteractionMesh();
+
+    this._addToScene();
+  }
+
+  _initMaterials() {
+    this.doorMaterial = new THREE.MeshStandardMaterial({
+      color: DOOR_CONFIG.COLORS.LOCKED,
+      transparent: true,
+      opacity: DOOR_CONFIG.MATERIALS.LOCKED.OPACITY,
+      emissive: new THREE.Color(DOOR_CONFIG.MATERIALS.LOCKED.EMISSIVE),
+      emissiveIntensity: DOOR_CONFIG.MATERIALS.LOCKED.EMISSIVE_INTENSITY
+    });
+
+    this.frameMaterial = new THREE.MeshStandardMaterial({
+      color: DOOR_CONFIG.COLORS.FRAME
+    });
+
+    this.interactionMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00ff00,
+      transparent: true,
+      opacity: 0.0,
+      depthWrite: false
+    });
+  }
+
+  _createDoor() {
+    const geometry = new THREE.BoxGeometry(
+      DOOR_CONFIG.SIZE.WIDTH,
+      DOOR_CONFIG.SIZE.HEIGHT,
+      DOOR_CONFIG.SIZE.DEPTH
+    );
+
+    this.doorMesh = new THREE.Mesh(geometry, this.doorMaterial);
+    this.doorMesh.position.copy(this.position);
+    this.doorMesh.userData.requiredRune = null;
+    this.doorMesh.name = "exit_door";
+  }
+
+  _createFrame() {
+    this.frameGroup = new THREE.Group();
+    this.frameGroup.position.copy(this.position);
+
+    const { WIDTH, HEIGHT } = DOOR_CONFIG.SIZE;
+    const { THICKNESS, DEPTH } = DOOR_CONFIG.FRAME;
+
+    // Left frame
+    const left = new THREE.Mesh(
+      new THREE.BoxGeometry(THICKNESS, HEIGHT, DEPTH),
+      this.frameMaterial
+    );
+    left.position.set(-WIDTH / 2 - THICKNESS / 2, 0, 0);
+
+    // Right frame
+    const right = new THREE.Mesh(
+      new THREE.BoxGeometry(THICKNESS, HEIGHT, DEPTH),
+      this.frameMaterial
+    );
+    right.position.set(WIDTH / 2 + THICKNESS / 2, 0, 0);
+
+    // Top frame
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(WIDTH + THICKNESS * 2, THICKNESS, DEPTH),
+      this.frameMaterial
+    );
+    top.position.set(0, HEIGHT / 2 + THICKNESS / 2, 0);
+
+    this.frameGroup.add(left);
+    this.frameGroup.add(right);
+    this.frameGroup.add(top);
+  }
+
+  _createInteractionMesh() {
+    const geometry = new THREE.BoxGeometry(
+      DOOR_CONFIG.INTERACTION.WIDTH,
+      DOOR_CONFIG.INTERACTION.HEIGHT,
+      DOOR_CONFIG.INTERACTION.DEPTH
+    );
+
+    this.interactionMesh = new THREE.Mesh(geometry, this.interactionMaterial);
+    this.interactionMesh.position.copy(this.position);
+    this.interactionMesh.name = "exit_door_hitbox";
+  }
+
+  _addToScene() {
+    this.scene.add(this.doorMesh);
+    this.scene.add(this.frameGroup);
+    this.scene.add(this.interactionMesh);
+  }
+
+  getObject() {
+    return this.interactionMesh;
+  }
+
+  isUnlocked() {
+    return !this.locked;
+  }
+
+  setLocked() {
+    this.locked = true;
+    this.doorMesh.material.color.set(DOOR_CONFIG.COLORS.LOCKED);
+    this.doorMesh.material.opacity = DOOR_CONFIG.MATERIALS.LOCKED.OPACITY;
+    this.doorMesh.material.emissive.set(DOOR_CONFIG.MATERIALS.LOCKED.EMISSIVE);
+  }
+
+  setUnlocked() {
+    this.locked = false;
+    this.doorMesh.material.color.set(DOOR_CONFIG.COLORS.UNLOCKED);
+    this.doorMesh.material.opacity = DOOR_CONFIG.MATERIALS.UNLOCKED.OPACITY;
+    this.doorMesh.material.emissive.set(DOOR_CONFIG.MATERIALS.UNLOCKED.EMISSIVE);
+    this.doorMesh.material.emissiveIntensity = 
+      DOOR_CONFIG.MATERIALS.UNLOCKED.EMISSIVE_INTENSITY;
+  }
+
+  setOpen() {
+    this.doorMesh.visible = false;
+    this.interactionMesh.visible = false;
+  }
+
+  resetVisual() {
+    this.setLocked();
+  }
+
+  dispose() {
+    this.doorMesh.geometry.dispose();
+    this.doorMaterial.dispose();
+    this.frameMaterial.dispose();
+    this.interactionMaterial.dispose();
+    
+    this.frameGroup.children.forEach(child => {
+      child.geometry.dispose();
+    });
+  }
+}
+
+export function spawnExitDoor(scene, mazeLayout) {
+  const { x, z } = mazeLayout.objects.exit;
+  const doorHeight = DOOR_CONFIG.SIZE.HEIGHT;
+  const offset = tileSize / (Math.random() < 0.5 ? -2 : 2);
+  
+  const position = new THREE.Vector3(
+    x * tileSize + offset,
+    doorHeight / 2,
+    z * tileSize + offset
+  );
+
+  return new ExitDoor(scene, position);
+}
+
+file: DoorManager.js
+// src/exit/DoorManager.js
+export class DoorManager {
+  constructor(exitDoor, gameManager) {
+    this.exitDoor = exitDoor;
+    this.gameManager = gameManager;
+    this.doors = new Map(); // Using Map for better performance with object keys
+
+    this._initializeExitDoor();
+  }
+
+  _initializeExitDoor() {
+    const doorData = {
+      mesh: this.exitDoor.getObject(),
+      isOpen: false,
+      locked: true,
+      type: 'exit'
+    };
+    this.doors.set(doorData.mesh, doorData);
+    this.exitDoor.setLocked(); // Use class method instead of direct material access
+  }
+
+  getDoors() {
+    return Array.from(this.doors.values()).map(d => d.mesh);
+  }
+
+  tryOpenDoor(doorMesh) {
+    const doorData = this.doors.get(doorMesh);
+    if (!doorData) return false;
+
+    if (doorData.locked) {
+      this._showMessage("The door is locked! Activate the exit mechanism first.");
+      return false;
+    }
+
+    if (doorData.isOpen) {
+      this._showMessage("The door is already open. You can exit.");
+      return true;
+    }
+
+    return this._openDoor(doorData);
+  }
+
+  _openDoor(doorData) {
+    doorData.isOpen = true;
+    this.exitDoor.setOpen();
+    this._showMessage("The door is open! Go!");
+    console.log("🚪 Door is now passable");
+    return true;
+  }
+
+  _showMessage(message) {
+    this.gameManager?.hud?.showMessage(message);
+  }
+
+  unlock() {
+    const [firstDoor] = this.doors.values();
+    if (!firstDoor) return false;
+
+    firstDoor.locked = false;
+    this.exitDoor.setUnlocked();
+    console.log("🔓 Door unlocked!");
+    return true;
+  }
+
+  isDoorLocked() {
+    const [firstDoor] = this.doors.values();
+    return firstDoor?.locked ?? true;
+  }
+
+  isDoorOpen() {
+    const [firstDoor] = this.doors.values();
+    return firstDoor?.isOpen ?? false;
+  }
+
+  reset() {
+    this.doors.forEach(doorData => {
+      doorData.isOpen = false;
+      doorData.locked = true;
+    });
+    this.exitDoor.resetVisual();
+  }
+
+  dispose() {
+    this.doors.clear();
+    this.exitDoor = null;
+    this.gameManager = null;
+  }
+}
+
+file: ExitMechanism.js
+import * as THREE from 'three';
+
+// Constants
+const MECHANISM_CONFIG = {
+  GEOMETRY: {
+    RADIUS: 0.5,
+    HEIGHT: 0.4,
+    SEGMENTS: 32
+  },
+  MATERIAL: {
+    COLOR: 0xffcc00,
+    EMISSIVE: 0xffcc00,
+    EMISSIVE_INTENSITY: 1
+  },
+  POSITION: {
+    Y_OFFSET: 0.5,
+    RANDOM_OFFSET: 2.1
+  },
+  ROTATION: Math.PI / 2 // Rotate to face the player
+};
+
+export class ExitMechanism {
+  constructor(scene, position, gameManager) {
+    this.scene = scene;
+    this.position = position;
+    this.gameManager = gameManager;
+    this._initialized = false;
+
+    this.init();
+  }
+
+  init() {
+    if (this._initialized) return;
+
+    this.mesh = this._createMechanismMesh();
+    this.scene.add(this.mesh);
+    this._initialized = true;
+  }
+
+  _createMechanismMesh() {
+    const geometry = new THREE.CylinderGeometry(
+      MECHANISM_CONFIG.GEOMETRY.RADIUS,
+      MECHANISM_CONFIG.GEOMETRY.RADIUS,
+      MECHANISM_CONFIG.GEOMETRY.HEIGHT,
+      MECHANISM_CONFIG.GEOMETRY.SEGMENTS
+    );
+
+    const material = new THREE.MeshStandardMaterial({
+      color: MECHANISM_CONFIG.MATERIAL.COLOR,
+      emissive: MECHANISM_CONFIG.MATERIAL.EMISSIVE,
+      emissiveIntensity: MECHANISM_CONFIG.MATERIAL.EMISSIVE_INTENSITY
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(this.position);
+    mesh.rotation.x = MECHANISM_CONFIG.ROTATION;
+    mesh.name = "exit_mechanism";
+    mesh.userData.isInteractable = true;
+
+    return mesh;
+  }
+
+  getObject() {
+    return this.mesh;
+  }
+
+  activate() {
+    if (!this._initialized) return;
+
+    console.log("🚨 Exit mechanism activated");
+    this.gameManager.triggerExitTimer();
+    this._cleanup();
+  }
+
+  _cleanup() {
+    if (this.mesh) {
+      this.scene.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
+      this.mesh = null;
+    }
+    this._initialized = false;
+  }
+
+  dispose() {
+    this._cleanup();
+  }
+}
+
+export function spawnExitMechanism(scene, gameManager, mazeLayout) {
+  const { x, z } = mazeLayout.objects.exitMechanism;
+  const offsetDirection = Math.random() < 0.5 ? -1 : 1;
+  const offset = tileSize / (offsetDirection * MECHANISM_CONFIG.POSITION.RANDOM_OFFSET);
+
+  const position = new THREE.Vector3(
+    x * tileSize + offset,
+    MECHANISM_CONFIG.POSITION.Y_OFFSET,
+    z * tileSize + offset
+  );
+
+  return new ExitMechanism(scene, position, gameManager);
+}
+
+file:  ExitTriggerZone.js
+import * as THREE from 'three';
+
+// Constants
+const TRIGGER_CONFIG = {
+  ACTIVATION_DISTANCE: 1.0,
+  MESSAGES: {
+    LOCKED: "The door is locked! Activate the exit mechanism first."
+  }
+};
+
+export class ExitTriggerZone {
+  constructor(player, exitDoor, gameManager) {
+    this.player = player;
+    this.exitDoor = exitDoor;
+    this.gameManager = gameManager;
+    this.activated = false;
+    this._boundingBox = new THREE.Box3();
+    this._lastPosition = new THREE.Vector3();
+    this._distanceThreshold = TRIGGER_CONFIG.ACTIVATION_DISTANCE;
+  }
+
+  update() {
+    if (this.activated || !this.gameManager) return;
+
+    const playerPos = this.player.controls.object.position;
+    
+    // Early exit if player hasn't moved significantly
+    if (playerPos.distanceToSquared(this._lastPosition) < 0.01) return;
+    this._lastPosition.copy(playerPos);
+
+    const doorPos = this.exitDoor.getObject().position;
+    const distance = playerPos.distanceTo(doorPos);
+
+    if (distance < this._distanceThreshold) {
+      this._handleExitAttempt();
+    }
+  }
+
+  _handleExitAttempt() {
+    if (!this.exitDoor.isUnlocked()) {
+      this.gameManager.hud?.showMessage(TRIGGER_CONFIG.MESSAGES.LOCKED);
+      return;
+    }
+
+    this.activated = true;
+    this.gameManager.winGame();
+  }
+
+  reset() {
+    this.activated = false;
+    this._lastPosition.set(0, 0, 0);
+  }
+
+  dispose() {
+    // Cleanup if needed
+    this.player = null;
+    this.exitDoor = null;
+    this.gameManager = null;
+  }
+
+  // For debugging/visualization
+  getDebugMesh() {
+    const size = new THREE.Vector3(
+      this._distanceThreshold * 2,
+      this._distanceThreshold * 2,
+      this._distanceThreshold * 2
+    );
+    const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xff0000,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.3
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(this.exitDoor.getObject().position);
+    return mesh;
+  }
+}
+
+file: Lighting.js
+import * as THREE from 'three';
+
+// Lighting configuration constants
+const LIGHTING_CONFIG = {
+  AMBIENT: {
+    COLOR: 0x404040,
+    INTENSITY: 0.2
+  },
+  HEMISPHERE: {
+    SKY_COLOR: 0x5577aa,
+    GROUND_COLOR: 0x886622,
+    INTENSITY: 0.5,
+    POSITION: { x: 0, y: 20, z: 0 }
+  },
+  DIRECTIONAL: {
+    COLOR: 0xfff4e6,
+    INTENSITY: 0.7,
+    POSITION: { x: 7, y: 20, z: 8 },
+    SHADOW: {
+      MAP_SIZE: 1024,
+      CAMERA: {
+        NEAR: 0.5,
+        FAR: 40,
+        LEFT: -15,
+        RIGHT: 15,
+        TOP: 15,
+        BOTTOM: -15
+      },
+      RADIUS: 2
+    }
+  },
+  FILL: {
+    COLOR: 0x4466ff,
+    INTENSITY: 0.2,
+    DISTANCE: 25,
+    POSITION: { x: -10, y: 5, z: -10 },
+    DECAY: 2
+  },
+  RIM: {
+    COLOR: 0xffffff,
+    INTENSITY: 0.3,
+    POSITION: { x: -5, y: 10, z: 10 }
+  },
+  FOG: {
+    COLOR: 0x111122,
+    DENSITY: 0.025
+  }
+};
+
+export class LightingManager {
+  constructor(scene) {
+    this.scene = scene;
+    this.lights = new Map();
+    this._setupLights();
+  }
+
+  _setupLights() {
+    this._createAmbientLight();
+    this._createHemisphereLight();
+    this._createDirectionalLight();
+    this._createFillLight();
+    this._createRimLight();
+    this._setupFog();
+  }
+
+  _createAmbientLight() {
+    const light = new THREE.AmbientLight(
+      LIGHTING_CONFIG.AMBIENT.COLOR,
+      LIGHTING_CONFIG.AMBIENT.INTENSITY
+    );
+    this.scene.add(light);
+    this.lights.set('ambient', light);
+  }
+
+  _createHemisphereLight() {
+    const light = new THREE.HemisphereLight(
+      LIGHTING_CONFIG.HEMISPHERE.SKY_COLOR,
+      LIGHTING_CONFIG.HEMISPHERE.GROUND_COLOR,
+      LIGHTING_CONFIG.HEMISPHERE.INTENSITY
+    );
+    light.position.set(
+      LIGHTING_CONFIG.HEMISPHERE.POSITION.x,
+      LIGHTING_CONFIG.HEMISPHERE.POSITION.y,
+      LIGHTING_CONFIG.HEMISPHERE.POSITION.z
+    );
+    this.scene.add(light);
+    this.lights.set('hemisphere', light);
+  }
+
+  _createDirectionalLight() {
+    const light = new THREE.DirectionalLight(
+      LIGHTING_CONFIG.DIRECTIONAL.COLOR,
+      LIGHTING_CONFIG.DIRECTIONAL.INTENSITY
+    );
+    light.position.set(
+      LIGHTING_CONFIG.DIRECTIONAL.POSITION.x,
+      LIGHTING_CONFIG.DIRECTIONAL.POSITION.y,
+      LIGHTING_CONFIG.DIRECTIONAL.POSITION.z
+    );
+    light.castShadow = true;
+
+    // Shadow configuration
+    light.shadow.mapSize.width = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.MAP_SIZE;
+    light.shadow.mapSize.height = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.MAP_SIZE;
+    light.shadow.camera.near = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.CAMERA.NEAR;
+    light.shadow.camera.far = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.CAMERA.FAR;
+    light.shadow.camera.left = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.CAMERA.LEFT;
+    light.shadow.camera.right = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.CAMERA.RIGHT;
+    light.shadow.camera.top = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.CAMERA.TOP;
+    light.shadow.camera.bottom = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.CAMERA.BOTTOM;
+    light.shadow.radius = LIGHTING_CONFIG.DIRECTIONAL.SHADOW.RADIUS;
+
+    this.scene.add(light);
+    this.lights.set('directional', light);
+  }
+
+  _createFillLight() {
+    const light = new THREE.PointLight(
+      LIGHTING_CONFIG.FILL.COLOR,
+      LIGHTING_CONFIG.FILL.INTENSITY,
+      LIGHTING_CONFIG.FILL.DISTANCE,
+      LIGHTING_CONFIG.FILL.DECAY
+    );
+    light.position.set(
+      LIGHTING_CONFIG.FILL.POSITION.x,
+      LIGHTING_CONFIG.FILL.POSITION.y,
+      LIGHTING_CONFIG.FILL.POSITION.z
+    );
+    this.scene.add(light);
+    this.lights.set('fill', light);
+  }
+
+  _createRimLight() {
+    const light = new THREE.DirectionalLight(
+      LIGHTING_CONFIG.RIM.COLOR,
+      LIGHTING_CONFIG.RIM.INTENSITY
+    );
+    light.position.set(
+      LIGHTING_CONFIG.RIM.POSITION.x,
+      LIGHTING_CONFIG.RIM.POSITION.y,
+      LIGHTING_CONFIG.RIM.POSITION.z
+    );
+    this.scene.add(light);
+    this.lights.set('rim', light);
+  }
+
+  _setupFog() {
+    this.scene.fog = new THREE.FogExp2(
+      LIGHTING_CONFIG.FOG.COLOR,
+      LIGHTING_CONFIG.FOG.DENSITY
+    );
+  }
+
+  updateLight(name, properties) {
+    const light = this.lights.get(name);
+    if (!light) return;
+
+    if (properties.color !== undefined) {
+      light.color.set(properties.color);
+    }
+    if (properties.intensity !== undefined) {
+      light.intensity = properties.intensity;
+    }
+    if (properties.position !== undefined) {
+      light.position.set(
+        properties.position.x,
+        properties.position.y,
+        properties.position.z
+      );
+    }
+  }
+
+  dispose() {
+    this.lights.forEach(light => {
+      if (light.dispose) light.dispose();
+      this.scene.remove(light);
+    });
+    this.lights.clear();
+    this.scene.fog = null;
+  }
+}
+
+// Legacy function for backward compatibility
+export function setupLighting(scene) {
+  return new LightingManager(scene);
+}
+
+file: initScene.js
+import * as THREE from 'three';
+import { setupLighting } from './Lighting.js';
+
+// Constants
+const SCENE_CONFIG = {
+  BACKGROUND: 0x87ceeb, // Sky blue
+  FOG: {
+    COLOR: 0x87ceeb,
+    NEAR: 20,
+    FAR: 100
+  },
+  CAMERA: {
+    FOV: 75,
+    NEAR: 0.1,
+    FAR: 1000
+  },
+  GROUND: {
+    SIZE: 100,
+    COLOR: 0xd8cab8, // Sand
+    ROTATION: -Math.PI / 2
+  },
+  RENDERER: {
+    ANTIALIAS: true,
+    SHADOW_MAP: {
+      ENABLED: true,
+      TYPE: THREE.PCFSoftShadowMap
+    }
+  }
+};
+
+export class SceneManager {
+  constructor(container) {
+    this.container = container;
+    this.scene = new THREE.Scene();
+    this._initScene();
+    this._initCamera();
+    this._initRenderer();
+    this._setupEnvironment();
+  }
+
+  _initScene() {
+    // Set background and fog
+    this.scene.background = new THREE.Color(SCENE_CONFIG.BACKGROUND);
+    this.scene.fog = new THREE.Fog(
+      SCENE_CONFIG.FOG.COLOR,
+      SCENE_CONFIG.FOG.NEAR,
+      SCENE_CONFIG.FOG.FAR
+    );
+  }
+
+  _initCamera() {
+    this.camera = new THREE.PerspectiveCamera(
+      SCENE_CONFIG.CAMERA.FOV,
+      window.innerWidth / window.innerHeight,
+      SCENE_CONFIG.CAMERA.NEAR,
+      SCENE_CONFIG.CAMERA.FAR
+    );
+  }
+
+  _initRenderer() {
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: SCENE_CONFIG.RENDERER.ANTIALIAS
+    });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.shadowMap.enabled = SCENE_CONFIG.RENDERER.SHADOW_MAP.ENABLED;
+    this.renderer.shadowMap.type = SCENE_CONFIG.RENDERER.SHADOW_MAP.TYPE;
+    this.container.appendChild(this.renderer.domElement);
+  }
+
+  _setupEnvironment() {
+    // Lighting setup
+    setupLighting(this.scene);
+
+    // Ground plane
+    this.ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(SCENE_CONFIG.GROUND.SIZE, SCENE_CONFIG.GROUND.SIZE),
+      new THREE.MeshStandardMaterial({ color: SCENE_CONFIG.GROUND.COLOR })
+    );
+    this.ground.rotation.x = SCENE_CONFIG.GROUND.ROTATION;
+    this.ground.receiveShadow = true;
+    this.scene.add(this.ground);
+  }
+
+  onWindowResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  dispose() {
+    // Cleanup ground geometry and material
+    this.ground.geometry.dispose();
+    this.ground.material.dispose();
+
+    // Remove renderer DOM element
+    if (this.renderer.domElement.parentNode === this.container) {
+      this.container.removeChild(this.renderer.domElement);
+    }
+
+    // Dispose renderer
+    this.renderer.dispose();
+
+    // Clear scene
+    while(this.scene.children.length > 0) {
+      const child = this.scene.children[0];
+      if (child.dispose) child.dispose();
+      this.scene.remove(child);
+    }
+  }
+}
+
+// Legacy function for backward compatibility
+export function initScene(container) {
+  return new SceneManager(container);
+}
+
+file: StartScreen.js
+// src/ui/StartScreen.js
+
+export class StartScreen {
+  constructor() {
+    this.el = this._createContainer();
+    this.runeSymbols = this._getRuneSymbols();
+    this.decryptionComplete = false;
+    this.animationTimeout = null;
+    this.onStart = null;
+
+    this._buildHTMLStructure();
+    document.body.appendChild(this.el);
+    this._setupEventListeners();
+  }
+
+  _createContainer() {
+    const container = document.createElement('div');
+    container.id = 'start-screen';
+    container.className = 'start-screen pixel-art';
+    container.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle, #0a1a1f 0%, #051015 100%);
+      z-index: 10000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      pointer-events: none;
+    `;
+    return container;
+  }
+
+  _getRuneSymbols() {
+    return [
+      'ᚠ', 'ᚢ', 'ᚦ', 'ᚨ', 'ᚱ', 'ᚲ', 'ᚷ', 'ᚹ', 'ᚺ', 'ᚻ', 'ᚼ', 'ᚽ',
+      'ᚾ', 'ᚿ', 'ᛀ', 'ᛁ', 'ᛂ', 'ᛃ', 'ᛇ', 'ᛈ', 'ᛉ', 'ᛊ', 'ᛋ', 'ᛌ',
+      'ᛍ', 'ᛎ', 'ᛏ', 'ᛐ', 'ᛑ', 'ᛒ', 'ᛓ', 'ᛔ', 'ᛕ', 'ᛖ', 'ᛗ', 'ᛘ',
+      'ᛙ', 'ᛚ', 'ᛛ', 'ᛜ', 'ᛝ', 'ᛞ', 'ᛟ'
+    ];
+  }
+
+  _buildHTMLStructure() {
+    this.el.innerHTML = `
+      <div class="jungle-vines">
+        <div class="vine vine-1"></div>
+        <div class="vine vine-2"></div>
+        <div class="vine vine-3"></div>
+      </div>
+
+      <div class="stone-tablet">
+        <div class="title-plaque">
+          <h1 class="game-title" data-original="Treasure Maze Quest"></h1>
+          <h2 class="game-subtitle" data-original="Rune Trials"></h2>
+          <div class="rune-divider">ᛞᛟᛞ</div>
+        </div>
+        
+        <div class="guide">
+          <p class="game-desc" data-original="Unravel the Runes, Escape the Maze, Claim the Treasure."></p>
+
+          <div class="guide-section">
+            <h3 class="guide-title" data-original="Ancient Prophecy"></h3>
+            <ul class="rune-list">
+              <li data-original="Venture through the ancient maze's twisting corridors"></li>
+              <li data-original="Locate and collect all three mystical treasures"></li>
+              <li data-original="Collect magical runes to wield different spells"></li>
+              <li data-original="Beware of deceptive runes that may hinder you"></li>
+              <li data-original="Activate the exit mechanism to escape before time halts"></li>
+            </ul>
+          </div>
+
+          <div class="controls-section">
+            <h3 class="controls-title" data-original="Rune Mastery"></h3>
+            <div class="controls-grid">
+              <div class="control-item" data-original="W/A/S/D — Move"></div>
+              <div class="control-item" data-original="Mouse — Look Around"></div>
+              <div class="control-item" data-original="E — Interact / Pickup"></div>
+              <div class="control-item" data-original="Q — Use Rune Ability"></div>
+              <div class="control-item" data-original="Esc — Pause / Menu"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="start-prompt">
+          <div class="glowing-rune">✧</div>
+          <div class="hint-text" data-original="TOUCH THE RELIC TO BEGIN"></div>
+        </div>
+      </div>
+    `;
+
+    // Add CSS animations
+    this._addStyleElement();
+  }
+
+  _addStyleElement() {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes runePulse {
+        0% { opacity: 0.3; transform: scale(0.95); }
+        50% { opacity: 1; transform: scale(1.05); }
+        100% { opacity: 0.3; transform: scale(0.95); }
+      }
+      @keyframes vineSway {
+        0% { transform: rotate(-2deg); }
+        50% { transform: rotate(2deg); }
+        100% { transform: rotate(-2deg); }
+      }
+      .glowing-rune {
+        animation: runePulse 2s infinite ease-in-out;
+        font-size: 3rem;
+        cursor: pointer;
+      }
+      .vine {
+        position: absolute;
+        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 100"><path d="M5,0 Q10,50 5,100 Q0,50 5,0" fill="%23225533"/></svg>');
+        background-repeat: repeat-y;
+        width: 30px;
+        height: 100%;
+        animation: vineSway 5s infinite ease-in-out;
+      }
+      .vine-1 { left: 10%; top: 0; animation-delay: 0s; }
+      .vine-2 { right: 15%; top: 0; animation-delay: 1s; }
+      .vine-3 { left: 25%; top: 0; animation-delay: 2s; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  _getRandomRunes(count) {
+    return Array.from({ length: count }, () => 
+      this.runeSymbols[Math.floor(Math.random() * this.runeSymbols.length)]
+    ).join('');
+  }
+
+  _decryptElement(element) {
+    const originalText = element.getAttribute('data-original');
+    if (!originalText) return;
+
+    element.innerHTML = '';
+    const textLength = originalText.length;
+    const charDelay = 2000 / textLength;
+
+    for (let i = 0; i < textLength; i++) {
+      const span = document.createElement('span');
+      span.className = 'pending-rune';
+      span.textContent = this._getRandomRunes(1);
+      element.appendChild(span);
+    }
+
+    let current = 0;
+    const revealNext = () => {
+      if (current >= textLength) {
+        element.classList.add('revealed');
+        return;
+      }
+
+      const child = element.children[current];
+      child.textContent = originalText[current];
+      child.classList.replace('pending-rune', 'revealed-char');
+
+      current++;
+      this.animationTimeout = setTimeout(revealNext, charDelay);
+    };
+
+    element.classList.add('decrypting');
+    this.animationTimeout = setTimeout(revealNext, 100);
+  }
+
+  _animateTextDecryption() {
+    const elements = Array.from(this.el.querySelectorAll('[data-original]'));
+    const staggerDelay = 300;
+
+    elements.forEach((element, index) => {
+      setTimeout(() => {
+        this._decryptElement(element);
+      }, index * staggerDelay);
+    });
+
+    setTimeout(() => {
+      const divider = this.el.querySelector('.rune-divider');
+      if (divider) divider.textContent = this._getRandomRunes(3);
+      this.decryptionComplete = true;
+      this.el.style.pointerEvents = 'auto';
+    }, elements.length * staggerDelay + 1000);
+  }
+
+  _setupEventListeners() {
+    this.el.addEventListener('click', () => {
+      if (!this.decryptionComplete) return;
+      if (this.onStart) this.onStart();
+      this.hide();
+    });
+  }
+
+  show(onStartCallback) {
+    this.onStart = onStartCallback;
+    this.el.style.opacity = '1';
+    this.el.style.pointerEvents = 'none';
+    this.decryptionComplete = false;
+    this._animateTextDecryption();
+  }
+
+  hide() {
+    clearTimeout(this.animationTimeout);
+    this.el.style.opacity = '0';
+    this.el.style.pointerEvents = 'none';
+    setTimeout(() => {
+      if (this.el.parentNode) {
+        document.body.removeChild(this.el);
+      }
+    }, 500);
+  }
+}
+
+file: EndScreen.js
+// src/ui/EndScreen.js
+
+export class EndScreen {
+  constructor() {
+    this.container = this._createContainer();
+    this.message = this._createMessageElement();
+    this.playtime = this._createPlaytimeElement();
+    this.button = this._createButton();
+    
+    this._buildLayout();
+    document.body.appendChild(this.container);
+  }
+
+  _createContainer() {
+    const container = document.createElement("div");
+    container.id = "end-screen";
+    Object.assign(container.style, {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      width: "100%",
+      height: "100%",
+      backgroundColor: "rgba(0, 0, 0, 0.9)",
+      color: "white",
+      display: "none",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: "9999",
+      fontFamily: "'Arial', sans-serif",
+      backdropFilter: "blur(5px)",
+      transition: "opacity 0.5s ease"
+    });
+    return container;
+  }
+
+  _createMessageElement() {
+    const el = document.createElement("div");
+    Object.assign(el.style, {
+      fontSize: "3rem",
+      fontWeight: "bold",
+      marginBottom: "1rem",
+      textAlign: "center",
+      textShadow: "0 2px 4px rgba(0,0,0,0.5)"
+    });
+    return el;
+  }
+
+  _createPlaytimeElement() {
+    const el = document.createElement("div");
+    Object.assign(el.style, {
+      fontSize: "1.5rem",
+      marginBottom: "2rem",
+      opacity: "0.8",
+      fontFamily: "monospace"
+    });
+    return el;
+  }
+
+  _createButton() {
+    const button = document.createElement("button");
+    Object.assign(button.style, {
+      padding: "12px 24px",
+      fontSize: "1.2rem",
+      fontWeight: "bold",
+      backgroundColor: "#4CAF50",
+      color: "white",
+      border: "none",
+      borderRadius: "4px",
+      cursor: "pointer",
+      transition: "all 0.3s ease",
+      marginTop: "20px",
+      boxShadow: "0 4px 6px rgba(0,0,0,0.1)"
+    });
+    
+    button.innerText = "Play Again";
+    button.onmouseenter = () => button.style.transform = "scale(1.05)";
+    button.onmouseleave = () => button.style.transform = "scale(1)";
+    button.onclick = () => window.location.reload();
+    
+    return button;
+  }
+
+  _buildLayout() {
+    this.container.appendChild(this.message);
+    this.container.appendChild(this.playtime);
+    this.container.appendChild(this.button);
+  }
+
+  showResult(messageText, playtimeSeconds) {
+    this.message.innerText = messageText;
+    this._updatePlaytimeDisplay(playtimeSeconds);
+    this.container.style.display = "flex";
+    
+    // Fade-in animation
+    setTimeout(() => {
+      this.container.style.opacity = "1";
+    }, 10);
+  }
+
+  _updatePlaytimeDisplay(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    let timeString = "";
+    if (hours > 0) timeString += `${hours}h `;
+    if (minutes > 0 || hours > 0) timeString += `${minutes}m `;
+    timeString += `${secs}s`;
+    
+    this.playtime.innerText = `Playtime: ${timeString}`;
+  }
+
+  hide() {
+    this.container.style.opacity = "0";
+    setTimeout(() => {
+      this.container.style.display = "none";
+    }, 500); // Match transition duration
+  }
+}
+
+file: HUD.js
+// src/ui/HUD.js
+import { RuneTypes } from '../../entities/runes/RuneTypes.js';
+
+// CSS Constants
+const HUD_STYLES = {
+  BASE: {
+    marginBottom: '8px',
+    fontSize: '18px',
+    color: '#fff'
+  },
+  TIMER: {
+    fontSize: '20px',
+    marginBottom: '10px',
+    color: '#ffee88',
+    fontWeight: 'bold'
+  },
+  MESSAGE: {
+    transition: 'opacity 0.5s ease'
+  }
+};
+
+export class HUD {
+  constructor() {
+    this.uiContainer = document.getElementById('ui-overlay') || this._createUIContainer();
+    this._msgTimeout = null;
+    this._initElements();
+    this._applyStyles();
+  }
+
+  _createUIContainer() {
+    const container = document.createElement('div');
+    container.id = 'ui-overlay';
+    container.style.position = 'fixed';
+    container.style.top = '20px';
+    container.style.left = '20px';
+    container.style.zIndex = '1000';
+    document.body.appendChild(container);
+    return container;
+  }
+
+  _initElements() {
+    this.runeDisplay = this._createElement('rune-display');
+    this.timerDisplay = this._createElement('timer-display');
+    this.messageDisplay = this._createElement('status-message');
+    this.crosshair = this._createCrosshair();
+  }
+
+  _createElement(id) {
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      Object.assign(el.style, HUD_STYLES.BASE);
+      this.uiContainer.appendChild(el);
+    }
+    return el;
+  }
+
+  _createCrosshair() {
+    const crosshair = document.createElement('div');
+    crosshair.id = 'crosshair';
+    crosshair.style.position = 'fixed';
+    crosshair.style.top = '50%';
+    crosshair.style.left = '50%';
+    crosshair.style.transform = 'translate(-50%, -50%)';
+    crosshair.style.width = '20px';
+    crosshair.style.height = '20px';
+    crosshair.style.borderRadius = '50%';
+    crosshair.style.border = '2px solid rgba(255, 255, 255, 0.8)';
+    crosshair.style.pointerEvents = 'none';
+    document.body.appendChild(crosshair);
+    return crosshair;
+  }
+
+  _applyStyles() {
+    Object.assign(this.timerDisplay.style, HUD_STYLES.TIMER);
+    Object.assign(this.messageDisplay.style, HUD_STYLES.MESSAGE);
+    this.messageDisplay.style.opacity = '0';
+  }
+
+  updateRuneDisplay(runeName) {
+    if (!runeName) {
+      this.runeDisplay.textContent = 'No Rune';
+      this.runeDisplay.style.color = '#aaa';
+      return;
+    }
+
+    const runeData = RuneTypes[runeName];
+    if (runeData) {
+      this.runeDisplay.textContent = `Rune held: ${runeData.label}`;
+      this.runeDisplay.style.color = runeData.color || '#fff';
+    } else {
+      this.runeDisplay.textContent = runeName;
+      this.runeDisplay.style.color = '#fff';
+    }
+  }
+
+  startTimer(seconds) {
+    this.timerDisplay.style.display = 'block';
+    this.updateTimer(seconds);
+  }
+
+  updateTimer(secondsLeft) {
+    if (secondsLeft <= 0) {
+      this.timerDisplay.textContent = '';
+      this.timerDisplay.style.display = 'none';
+      return;
+    }
+
+    const mins = Math.floor(secondsLeft / 60);
+    const secs = String(secondsLeft % 60).padStart(2, '0');
+    this.timerDisplay.textContent = `Time Left: ${mins}:${secs}`;
+    this.timerDisplay.style.color = secondsLeft <= 10 ? '#ff5555' : '#ffee88';
+  }
+
+  showMessage(text, duration = 3000) {
+    clearTimeout(this._msgTimeout);
+    this.messageDisplay.textContent = text;
+    this.messageDisplay.style.opacity = '1';
+
+    if (duration > 0) {
+      this._msgTimeout = setTimeout(() => {
+        this.messageDisplay.style.opacity = '0';
+      }, duration);
+    }
+  }
+
+  toggle(show) {
+    this.uiContainer.style.display = show ? 'block' : 'none';
+    this.crosshair.style.display = show ? 'block' : 'none';
+  }
+
+  hide() {
+    this.toggle(false);
+  }
+
+  show() {
+    this.toggle(true);
+  }
+
+  dispose() {
+    clearTimeout(this._msgTimeout);
+    if (this.uiContainer.parentNode) {
+      document.body.removeChild(this.uiContainer);
+    }
+    if (this.crosshair.parentNode) {
+      document.body.removeChild(this.crosshair);
+    }
+  }
+}
+
+file: Tooltip.js
+// src/ui/Tooltip.js
+
+// CSS Constants
+const TOOLTIP_STYLES = {
+  BASE: {
+    position: 'fixed',
+    backgroundColor: 'rgba(30, 30, 30, 0.9)',
+    color: '#fff',
+    padding: '8px 16px',
+    borderRadius: '8px',
+    fontSize: '14px',
+    opacity: '0',
+    transition: 'opacity 0.3s ease, transform 0.2s ease',
+    zIndex: '1000',
+    maxWidth: '300px',
+    textAlign: 'center',
+    pointerEvents: 'none',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+    backdropFilter: 'blur(4px)',
+    lineHeight: '1.4',
+    transform: 'translate(-50%, 10px)'
+  },
+  TOP: {
+    top: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)'
+  },
+  WORLD: {
+    transform: 'translate(-50%, -100%)'
+  },
+  VISIBLE: {
+    opacity: '1',
+    transform: 'translate(-50%, 0)'
+  }
+};
+
+export class Tooltip {
+  constructor() {
+    this.topEl = this._createTooltipElement('top');
+    this.worldEl = this._createTooltipElement('world');
+    this.topTimeout = null;
+    this.worldTimeout = null;
+    this.worldVisible = false;
+    this._applyStyles();
+  }
+
+  _createTooltipElement(type) {
+    const el = document.createElement('div');
+    el.id = `tooltip-${type}`;
+    el.className = 'game-tooltip';
+    Object.assign(el.style, TOOLTIP_STYLES.BASE);
+    document.body.appendChild(el);
+    return el;
+  }
+
+  _applyStyles() {
+    Object.assign(this.topEl.style, TOOLTIP_STYLES.TOP);
+    Object.assign(this.worldEl.style, TOOLTIP_STYLES.WORLD);
+  }
+
+  showTop(text, duration = 3000) {
+    this.topEl.textContent = text;
+    Object.assign(this.topEl.style, TOOLTIP_STYLES.VISIBLE);
+    clearTimeout(this.topTimeout);
+    
+    if (duration > 0) {
+      this.topTimeout = setTimeout(() => this.hideTop(), duration);
+    }
+  }
+
+  hideTop() {
+    this.topEl.style.opacity = '0';
+    this.topEl.style.transform = `${TOOLTIP_STYLES.TOP.transform} translateY(10px)`;
+  }
+
+  showWorld(text, screenPos, duration = 2000) {
+    this.worldEl.textContent = text;
+    Object.assign(this.worldEl.style, TOOLTIP_STYLES.VISIBLE);
+    this.setWorldPosition(screenPos);
+    clearTimeout(this.worldTimeout);
+    
+    if (duration > 0) {
+      this.worldTimeout = setTimeout(() => this.hideWorld(), duration);
+    }
+    this.worldVisible = true;
+  }
+
+  hideWorld() {
+    this.worldEl.style.opacity = '0';
+    this.worldEl.style.transform = `${TOOLTIP_STYLES.WORLD.transform} translateY(10px)`;
+    this.worldVisible = false;
+  }
+
+  setWorldPosition(screenPos) {
+    if (!this.worldVisible) return;
+    this.worldEl.style.left = `${screenPos.x}px`;
+    this.worldEl.style.top = `${screenPos.y}px`;
+  }
+
+  updateWorldPosition(screenPos) {
+    if (this.worldVisible) {
+      this.setWorldPosition(screenPos);
+    }
+  }
+
+  dispose() {
+    clearTimeout(this.topTimeout);
+    clearTimeout(this.worldTimeout);
+    if (this.topEl.parentNode) document.body.removeChild(this.topEl);
+    if (this.worldEl.parentNode) document.body.removeChild(this.worldEl);
+  }
+}
+
+
+file: UIManager.js 
+import { HUD } from './HUD.js';
+import { Tooltip } from './Tooltip.js';
+import { StartScreen } from './StartScreen.js';
+import { EndScreen } from './EndScreen.js';
+
+class UIManager {
+  constructor() {
+    this._components = {
+      hud: new HUD(),
+      tooltip: new Tooltip(),
+      startScreen: new StartScreen(),
+      endScreen: new EndScreen()
+    };
+    this._currentState = 'start';
+  }
+
+  // Public API
+  showStart(onStartCallback) {
+    this._components.startScreen.show(onStartCallback);
+    this._currentState = 'start';
+  }
+
+  startGame() {
+    this._components.hud.show();
+    this._components.startScreen.hide();
+    this._currentState = 'game';
+  }
+
+  endGame(results) {
+    this._components.hud.hide();
+    this._components.endScreen.showResults(
+      results.message,
+      results.playtime,
+      results.score
+    );
+    this._currentState = 'end';
+  }
+
+  showTooltip(text, options = {}) {
+    if (options.worldPosition) {
+      this._components.tooltip.showWorld(text, options.worldPosition, options.duration);
+    } else {
+      this._components.tooltip.showTop(text, options.duration);
+    }
+  }
+
+  updateHUD(data) {
+    this._components.hud.update(data);
+  }
+
+  // State management
+  get currentState() {
+    return this._currentState;
+  }
+
+  // Cleanup
+  dispose() {
+    Object.values(this._components).forEach(component => {
+      if (typeof component.dispose === 'function') {
+        component.dispose();
+      }
+    });
+  }
+}
+
+export const uiManager = new UIManager();
+
+
+file: loader.js 
+// src/loader.js
+import * as THREE from 'three';
+import { LoadingManager } from 'three';
+
+export class AssetLoader {
+  constructor() {
+    this.assets = new Map();
+    this.loadingManager = new LoadingManager();
+    this.totalAssets = 0;
+    this.loadedAssets = 0;
+    this.progressCallbacks = [];
+    this.errorCallbacks = [];
+
+    // Configure loading manager callbacks
+    this.loadingManager.onStart = () => this._dispatchProgress(0);
+    this.loadingManager.onProgress = () => {
+      this._dispatchProgress(this.loadedAssets / this.totalAssets);
+    };
+    this.loadingManager.onError = (url) => this._dispatchError(url);
+  }
+
+  /**
+   * Load all game assets
+   * @param {Object} manifest - Asset loading manifest 
+   * @returns {Promise} Resolves when all assets are loaded
+   */
+  async load(manifest) {
+    this.totalAssets = this._countAssets(manifest);
+    this.loadedAssets = 0;
+
+    const loadTasks = [];
+
+    // Textures
+    if (manifest.textures) {
+      loadTasks.push(this._loadTextures(manifest.textures));
+    }
+
+    // Models
+    if (manifest.models) {
+      loadTasks.push(this._loadModels(manifest.models));
+    }
+
+    // Audio
+    if (manifest.audio) {
+      loadTasks.push(this._loadAudio(manifest.audio));
+    }
+
+    // Fonts
+    if (manifest.fonts) {
+      loadTasks.push(this._loadFonts(manifest.fonts));
+    }
+
+    // Other assets
+    if (manifest.other) {
+      loadTasks.push(this._loadOtherAssets(manifest.other));
+    }
+
+    return Promise.all(loadTasks);
+  }
+
+  /**
+   * Register progress callback
+   * @param {Function} callback - Called with progress (0-1)
+   */
+  onProgress(callback) {
+    this.progressCallbacks.push(callback);
+  }
+
+  /**
+   * Register error callback
+   * @param {Function} callback - Called with error URL
+   */
+  onError(callback) {
+    this.errorCallbacks.push(callback);
+  }
+
+  /**
+   * Get loaded asset by key
+   * @param {string} key 
+   * @returns {*} Loaded asset
+   */
+  get(key) {
+    return this.assets.get(key);
+  }
+
+  /**
+   * Dispose all loaded assets
+   */
+  dispose() {
+    this.assets.forEach(asset => {
+      if (asset.dispose) asset.dispose();
+      if (asset.texture) asset.texture.dispose();
+    });
+    this.assets.clear();
+  }
+
+  // Private methods
+  _countAssets(manifest) {
+    let count = 0;
+    if (manifest.textures) count += Object.keys(manifest.textures).length;
+    if (manifest.models) count += Object.keys(manifest.models).length;
+    if (manifest.audio) count += Object.keys(manifest.audio).length;
+    if (manifest.fonts) count += Object.keys(manifest.fonts).length;
+    if (manifest.other) count += Object.keys(manifest.other).length;
+    return count;
+  }
+
+  _dispatchProgress(progress) {
+    this.progressCallbacks.forEach(cb => cb(progress));
+  }
+
+  _dispatchError(url) {
+    this.errorCallbacks.forEach(cb => cb(url));
+  }
+
+  async _loadTextures(textures) {
+    const loader = new THREE.TextureLoader(this.loadingManager);
+    
+    const promises = Object.entries(textures).map(([key, url]) => 
+      new Promise((resolve) => {
+        loader.load(url, (texture) => {
+          this.assets.set(key, texture);
+          this.loadedAssets++;
+          resolve();
+        });
+      })
+    );
+
+    return Promise.all(promises);
+  }
+
+  async _loadModels(models) {
+    const loader = new THREE.ObjectLoader(this.loadingManager);
+    
+    const promises = Object.entries(models).map(([key, url]) =>
+      new Promise((resolve) => {
+        loader.load(url, (model) => {
+          this.assets.set(key, model);
+          this.loadedAssets++;
+          resolve();
+        });
+      })
+    );
+
+    return Promise.all(promises);
+  }
+
+  async _loadAudio(audioFiles) {
+    const loader = new THREE.AudioLoader(this.loadingManager);
+    
+    const promises = Object.entries(audioFiles).map(([key, url]) =>
+      new Promise((resolve) => {
+        loader.load(url, (buffer) => {
+          this.assets.set(key, buffer);
+          this.loadedAssets++;
+          resolve();
+        });
+      })
+    );
+
+    return Promise.all(promises);
+  }
+
+  async _loadFonts(fonts) {
+    const loader = new THREE.FontLoader(this.loadingManager);
+    
+    const promises = Object.entries(fonts).map(([key, url]) =>
+      new Promise((resolve) => {
+        loader.load(url, (font) => {
+          this.assets.set(key, font);
+          this.loadedAssets++;
+          resolve();
+        });
+      })
+    );
+
+    return Promise.all(promises);
+  }
+
+  async _loadOtherAssets(otherAssets) {
+    const promises = Object.entries(otherAssets).map(([key, url]) =>
+      new Promise((resolve) => {
+        fetch(url)
+          .then(response => {
+            if (url.endsWith('.json')) return response.json();
+            return response.blob();
+          })
+          .then(data => {
+            this.assets.set(key, data);
+            this.loadedAssets++;
+            resolve();
+          })
+          .catch(() => this._dispatchError(url));
+      })
+    );
+
+    return Promise.all(promises);
+  }
+}
+
+// Singleton instance
+export const assetLoader = new AssetLoader();
+
+
+file: main.js 
+// src/main.js
+import * as THREE from 'three';
+import { Game } from './core/Game.js';
+
+// Initialize game when window loads
+window.onload = () => {
+  try {
+    const gameContainer = document.getElementById('game-container');
+    if (!gameContainer) throw new Error('Game container not found');
+    
+    const game = new Game(gameContainer);
+    game.start();
+  } catch (error) {
+    console.error('Game initialization failed:', error);
+    alert('Failed to initialize the game. Please try refreshing the page.');
+  }
+};
+
+
+styles.css
+:root {
+  --earth-bg: #0e1510;
+  --moss-green: #6b8c42;
+  --light-moss: #a8d8c0;
+  --stone-edge: #5a4b2b;
+  --relief-light: #f8e8a8;
+  --highlight-glow: #a8d8c0;
+  --text-muted: #c0c8a0;
+}
+
+/* RESET & GLOBAL */
+body, html {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
+  background-color: var(--earth-bg);
+  color: var(--relief-light);
+}
+
+/* GAME AREA */
+#game-container {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+/* UI OVERLAY */
+#ui-overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  pointer-events: none;
+  color: var(--light-moss);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+#crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 22px;
+  color: var(--relief-light);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+#vision-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: black;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  z-index: 999;
+  pointer-events: none;
+}
+
+/* START SCREEN - NON-BOXED */
+/* === Start Screen: Jungle Ruins Style === */
+
+
+index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Treasure Maze Quest: Rune Trials</title>
+  <link rel="stylesheet" href="styles/style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body>
+  <div id="game-container"></div>
+  <div id="vision-overlay"></div>
+  <div id="ui-overlay">
+    <div id="timer-display"></div>
+  </div>
+  <div id="crosshair">+</div>
+
+  <!-- Start Screen will mount here -->
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
